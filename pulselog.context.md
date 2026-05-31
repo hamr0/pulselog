@@ -220,10 +220,13 @@ loud) except `sqlite`, which is in-process:
 |---|---|---|---|
 | `sqlite` | `node:sqlite` `VACUUM INTO` (online, checkpoints WAL; **needs Node ≥ 22.5**) | `<label>.db` | `path` |
 | `postgres` | `pg_dump -Fc` (custom format: compressed, selective restore) | `<label>.dump` | `url` (+ `passwordEnv`) |
-| `mysql` | `mysqldump --single-transaction --quick --routines --triggers` (MySQL **and** MariaDB) | `<label>.sql` | `url` (+ `passwordEnv`) |
+| `mysql` | `mysqldump --single-transaction --quick --routines --triggers --result-file` (MySQL **and** MariaDB; streamed to disk, not buffered in memory) | `<label>.sql` | `url` (+ `passwordEnv`) |
 
-`label` is the entry's `name`, else `<engine>-<index>`. `passwordEnv` names an env var
-holding the password; pulselog passes it as `PGPASSWORD`/`MYSQL_PWD` to the child only.
+`label` is the entry's `name`, else `<engine>-<index>`. **Passwords go via env, never
+argv:** set `passwordEnv` (the name of an env var holding the password) and/or embed it
+in the `url` — either way pulselog routes it through `PGPASSWORD`/`MYSQL_PWD` to the
+child and strips it from the URL, so it never appears in `pg_dump`'s command line (where
+any local user could read it from the process table).
 
 **Dump cookbook (the `command` opt-out)** — for engines pulselog doesn't bundle, your
 `command` writes whatever it needs into `$PULSELOG_STAGE` and exits non-zero on
@@ -235,9 +238,15 @@ failure:
 // Postgres roles: "command": "sh", "args": ["-c", "pg_dumpall --globals-only > \"$PULSELOG_STAGE/globals.sql\""]
 ```
 
-**Lifecycle, in order:** stage `db` dumps → copy `include`s → run `command` → `tar`
-→ size floor → atomic `mv` → retention (only `<name>-*.tar.gz` in `dir`, **never** on a
-failed run) → one `kind:"backup"` line. **Honesty boundary:** pulselog asserts the dump
+Two sources that would stage under the same filename (e.g. two different dirs both named
+`config`) **fail loud** rather than one silently overwriting the other — give one a
+distinct `name`/path.
+
+**Lifecycle, in order:** stage `db` dumps → copy `include`s → run `command` → `tar` →
+**`chmod 0600`** → size floor → atomic `mv` → retention (only `<name>-*.tar.gz` in `dir`,
+**never** on a failed run) → one `kind:"backup"` line. The archive is created **owner-only
+(`0600`)** and `dir`/staging are `0700` — it holds DB dumps and private keys, so it's
+never group/world-readable. **Honesty boundary:** pulselog asserts the dump
 ran and the archive is ≥ `minBytes` — **not** restorability. Off-host copy, encryption,
 and restore-testing are yours (a `command` exiting 0 on a truncated dump is why the
 size floor + recorded `bytes` exist). A health `file-age` check on `dir` (with
@@ -285,6 +294,14 @@ record.
 - JSONL files are created `0600` (owner read/write only) so health/stats data isn't
   group/world-readable on a shared host. The mode applies at creation; an existing
   file keeps its perms. Keep these files off shared/world-readable paths.
+- **Backup archives are `0600`** and their `dir`/staging dirs `0700` — the archive
+  holds DB dumps and private keys (TLS/DKIM). DB passwords are passed to dump tools via
+  env, never argv. Off-host copy and **encryption at rest** are still yours (pulselog
+  owns the local envelope only).
+- **The config is a trust boundary:** `command`/`args` (health checks, digest metrics,
+  the backup `command`) execute as the pulselog user — often **root** for backups that
+  read `/etc/letsencrypt` or `/etc/opendkim`. Keep the config and any scripts it
+  references owned by that user and not writable by others (else it's code execution).
 
 "Local + private" means *it never phones home* — you still own what your queries
 return and what goes in `alert.app` / context.

@@ -111,7 +111,7 @@ App-specific probes (mail-queue depth, `pg_isready`, a bespoke script) go throug
 }
 ```
 
-pulselog owns the **envelope** (stage → tar → atomic `mv` → size floor → rolling retention over its own `<name>-*` archives → `kind:"backup"` line). It is **not a backup engine**: `db` ships the consistency-safe defaults for the common OSS engines, `include` is a plain file copy, and anything else (Mongo, Redis, a replica) stays your `command`. Off-host copy, encryption, and restore-testing are the operator's job. A failed run **records, alerts, and exits `1`** — and never rotates, so a bad backup can't delete a good one. See the [integration guide](pulselog.context.md) for the dump cookbook and every option.
+pulselog owns the **envelope** (stage → tar → atomic `mv` → size floor → rolling retention over its own `<name>-*` archives → `kind:"backup"` line). It is **not a backup engine**: `db` ships the consistency-safe defaults for the common OSS engines, `include` is a plain file copy, and anything else (Mongo, Redis, a replica) stays your `command`. Off-host copy, encryption, and restore-testing are the operator's job. A failed run **records, alerts, and exits `1`** — and never rotates, so a bad backup can't delete a good one. The archive holds DB dumps + keys, so it's written **`0600`** (dir `0700`), and DB passwords pass via env, never the command line. See the [integration guide](pulselog.context.md) for the dump cookbook and every option.
 
 ## The record
 
