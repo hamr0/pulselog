@@ -14,7 +14,8 @@ Work toward the first functional release, **`0.1.0`** (see the PRD in
 ### Added
 - **Health mode** (`pulselog --config <file>`) — scheduled external checks of a
   running app: `http` (status code only), `tcp`, `ssl` (cert expiry), `disk`,
-  `file-age` (backup freshness), `service` (systemd), and `command` (the escape
+  `file-age` (backup freshness, with `recursive` for date-stamped `daily/<date>/`
+  layouts), `service` (systemd), and `command` (the escape
   hatch). Runs enabled checks concurrently, **stays silent on green**, writes one
   `kind:"health"` JSONL line per failure, and sends **one** summary email when
   anything fails. Exit `0` on a health failure (the alert is the signal; cron stays

@@ -59,11 +59,13 @@ Write a config (copy `config.example.json`), then run each mode on its own sched
 | `tcp` | host:port accepts a connection (DB/queue reachability) | `host`, `port`, `timeoutMs` (5000) |
 | `ssl` | TLS cert is not near expiry | `host`, `port` (443), `warnDays` (14) |
 | `disk` | path is below a usage threshold | `path`, `maxPercent` (85) |
-| `file-age` | newest file in a dir is fresh (backups ran) | `path`, `maxAgeHours`, `pattern` |
+| `file-age` | newest file in a dir is fresh (backups ran) | `path`, `maxAgeHours`, `pattern`, `recursive` |
 | `service` | a systemd unit is `active` | `unit` |
 | `command` | any command exits `0` — the escape hatch | `command`, `args`, `timeoutMs` (10000) |
 
 App-specific probes (mail-queue depth, `pg_isready`, a bespoke script) go through `command` — run **without a shell** (`command` + `args` array); for a pipe, use `"command": "sh", "args": ["-c", "…"]`.
+
+`file-age` scans one directory by default; set `"recursive": true` for date-stamped backup layouts (`daily/<date>/app.db`) so it finds the newest match anywhere below `path`.
 
 **Digest metrics** — each is a name and a command that prints **one integer**; that integer is *all* pulselog stores. Anything else records `null` for that metric (noted, never fatal):
 

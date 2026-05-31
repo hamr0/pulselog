@@ -99,17 +99,51 @@ export async function disk(cfg) {
   return { ok, reason: ok ? `disk ${pct}% used` : `disk ${pct}% used (max ${maxPercent}%)`, detail: { percent: pct } };
 }
 
-/** The newest file in a dir (or a single file) is fresh — proves backups ran. */
+/**
+ * Newest mtime among matching files directly in `dir` — and, when `recursive`,
+ * in every subdir below it. Returns `{ newest, count }`; `count` 0 means nothing
+ * matched. Date-stamped backup layouts (`daily/<date>/app.db`) need `recursive`.
+ * @param {string} dir
+ * @param {string|undefined} pattern
+ * @param {boolean} recursive
+ * @returns {Promise<{ newest: number, count: number }>}
+ */
+async function newestMatch(dir, pattern, recursive) {
+  const entries = await readdir(dir, { withFileTypes: true });
+  let newest = -Infinity;
+  let count = 0;
+  for (const e of entries) {
+    const full = join(dir, e.name);
+    if (e.isDirectory()) {
+      if (!recursive) continue;
+      const sub = await newestMatch(full, pattern, recursive);
+      count += sub.count;
+      if (sub.count && sub.newest > newest) newest = sub.newest;
+      continue;
+    }
+    if (pattern && !e.name.includes(pattern)) continue;
+    count += 1;
+    const m = (await stat(full)).mtimeMs;
+    if (m > newest) newest = m;
+  }
+  return { newest, count };
+}
+
+/**
+ * The newest file in a dir (or a single file) is fresh — proves backups ran.
+ * `recursive: true` descends subdirs, for date-stamped layouts (`daily/<date>/app.db`).
+ */
 export async function fileAge(cfg) {
-  const { path, maxAgeHours, pattern } = cfg;
+  const { path, maxAgeHours, pattern, recursive = false } = cfg;
   try {
     const st = await stat(path);
     let newest;
     if (st.isDirectory()) {
-      const names = (await readdir(path)).filter((n) => !pattern || n.includes(pattern));
-      if (names.length === 0) return { ok: false, reason: `no files${pattern ? ` matching "${pattern}"` : ''} in ${path}` };
-      const times = await Promise.all(names.map(async (n) => (await stat(join(path, n))).mtimeMs));
-      newest = Math.max(...times);
+      const { newest: n, count } = await newestMatch(path, pattern, recursive);
+      if (count === 0) {
+        return { ok: false, reason: `no files${pattern ? ` matching "${pattern}"` : ''} in ${path}${recursive ? ' (recursive)' : ''}` };
+      }
+      newest = n;
     } else {
       newest = st.mtimeMs;
     }

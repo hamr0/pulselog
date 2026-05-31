@@ -70,7 +70,7 @@ pulselog --digest --dry-run --config …              # render the digest, don't
     { "type": "tcp",      "name": "db",      "enabled": true, "host": "127.0.0.1", "port": 5432 },
     { "type": "ssl",      "name": "cert",    "enabled": true, "host": "myapp.com", "warnDays": 14 },
     { "type": "disk",     "name": "disk",    "enabled": true, "path": "/var/lib/myapp", "maxPercent": 85 },
-    { "type": "file-age", "name": "backup",  "enabled": true, "path": "/var/lib/myapp-backups", "maxAgeHours": 26, "pattern": ".sqlite" },
+    { "type": "file-age", "name": "backup",  "enabled": true, "path": "/var/lib/myapp-backups", "maxAgeHours": 26, "pattern": ".sqlite", "recursive": true },
     { "type": "service",  "name": "postfix", "enabled": false, "unit": "postfix.service" },
     { "type": "command",  "name": "mailq",   "enabled": false, "command": "sh", "args": ["-c", "test $(mailq | grep -c '^[A-F0-9]') -lt 50"] }
   ]
@@ -85,7 +85,7 @@ pulselog --digest --dry-run --config …              # render the digest, don't
 | `tcp` | host:port accepts a connection | `host`, `port`, `timeoutMs` (5000) |
 | `ssl` | TLS cert is not near expiry | `host`, `port` (443), `warnDays` (14) |
 | `disk` | path is below a usage threshold | `path`, `maxPercent` (85) |
-| `file-age` | newest file in a dir is fresh (backups ran) | `path`, `maxAgeHours`, `pattern` |
+| `file-age` | newest file in a dir is fresh (backups ran) | `path`, `maxAgeHours`, `pattern`, `recursive` (false — set true for date-stamped `daily/<date>/` layouts) |
 | `service` | a systemd unit is `active` | `unit` |
 | `command` | any command exits `0` — the escape hatch | `command`, `args`, `timeoutMs` (10000) |
 

@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtempSync, rmSync, writeFileSync, utimesSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, utimesSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { http, fileAge, disk } from '../src/checks.js';
@@ -72,6 +72,23 @@ test('file-age: empty/missing target fails cleanly', async (t) => {
   const r = await fileAge({ path: dir, maxAgeHours: 24, pattern: '.sqlite' });
   assert.equal(r.ok, false);
   assert.match(r.reason, /no files/);
+});
+
+// Date-stamped backup layout (addypin: daily/<date>/app.db). The fresh file lives
+// one level down, so the default single-level scan must NOT see it, and recursive
+// MUST — same tree, the flag is the only difference.
+test('file-age: recursive finds files in date-stamped subdirs; default does not', async (t) => {
+  const root = tmp(t);
+  const day = join(root, 'daily', '2026-05-31');
+  mkdirSync(day, { recursive: true });
+  writeFileSync(join(day, 'addypin.db'), 'x');
+
+  const shallow = await fileAge({ path: join(root, 'daily'), maxAgeHours: 26, pattern: '.db' });
+  assert.equal(shallow.ok, false, 'single-level scan must not descend');
+  assert.match(shallow.reason, /no files/);
+
+  const deep = await fileAge({ path: join(root, 'daily'), maxAgeHours: 26, pattern: '.db', recursive: true });
+  assert.equal(deep.ok, true, 'recursive scan must find the nested backup');
 });
 
 test('disk: root is below 100% and parses a percent', async () => {
