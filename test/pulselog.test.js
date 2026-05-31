@@ -3,11 +3,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, utimesSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, chmodSync, utimesSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { http, fileAge, disk } from '../src/checks.js';
-import { assembleEmail } from '../src/email.js';
+import { assembleEmail, sendEmail } from '../src/email.js';
 import { run } from '../src/run.js';
 
 /** Spin a one-response HTTP server on an ephemeral port; returns { url, close }. */
@@ -110,6 +110,23 @@ test('assembleEmail: subject + body name the failing checks', () => {
   assert.match(subject, /\[myapp\].*2 check/);
   assert.match(body, /api \[http\]: HTTP 503/);
   assert.match(body, /cert \[ssl\]: cert expires in 3d/);
+});
+
+test('sendEmail[sec]: a newline in a header field cannot inject a mail header', (t) => {
+  const dir = tmp(t);
+  const rec = join(dir, 'rec');
+  // fake `mail` on PATH that records its argv verbatim
+  writeFileSync(join(dir, 'mail'), `#!/bin/sh\nfor a in "$@"; do printf '[%s]' "$a"; done > ${rec}\n`);
+  chmodSync(join(dir, 'mail'), 0o755);
+  const orig = process.env.PATH;
+  process.env.PATH = `${dir}:${orig}`;
+  t.after(() => { process.env.PATH = orig; });
+
+  const via = sendEmail({ to: 'ops@x', from: 'a@b', subject: 'hi\nBcc: attacker@evil.test', body: 'B' });
+  assert.equal(via, 'mail');
+  const got = readFileSync(rec, 'utf8');
+  assert.doesNotMatch(got, /\n/, 'no newline reaches the header fields');
+  assert.match(got, /Bcc: attacker@evil\.test/, 'the injection attempt is flattened into the subject text, not a header');
 });
 
 test('run: silent on green (no file written), records each failure on red', async (t) => {

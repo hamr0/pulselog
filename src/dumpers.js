@@ -5,7 +5,6 @@
 // wrong-version tool fails loud), sqlite uses the Node-bundled engine, and
 // anything exotic stays the adopter's `command` opt-out + the dump cookbook.
 import { spawnSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
 
 /** Filename a dump lands under in the staging dir. */
 export function dbDest(entry, i) {
@@ -14,9 +13,13 @@ export function dbDest(entry, i) {
   return `${label}.${ext}`;
 }
 
-/** `pg_dump -Fc` — custom format: compressed, consistent, selective restore. */
+/** `pg_dump -Fc` — custom format: compressed, consistent, selective restore. The
+ * password is stripped from the URL (routed via PGPASSWORD env in dumpDb) so it
+ * never lands in argv, where any local user could read it from the process table. */
 export function pgDumpArgs({ url, dest }) {
-  return ['-Fc', '-f', dest, url];
+  let conn = url;
+  try { const u = new URL(url); u.password = ''; conn = u.toString(); } catch { /* not a URL (e.g. a keyword conninfo) — pass as-is */ }
+  return ['-Fc', '-f', dest, conn];
 }
 
 /**
@@ -66,8 +69,13 @@ async function sqliteDump({ path, dest }) {
  * any failure (caught by the orchestrator → record fail, alert, exit 1). */
 export async function dumpDb(entry, dest) {
   const env = { ...process.env };
-  if (entry.passwordEnv && process.env[entry.passwordEnv]) {
-    const pw = process.env[entry.passwordEnv];
+  // Resolve the password from `passwordEnv`, else from a password embedded in the
+  // URL — and route it through env (PGPASSWORD/MYSQL_PWD), never argv (process-table leak).
+  let pw = entry.passwordEnv ? process.env[entry.passwordEnv] : undefined;
+  if (!pw && (entry.engine === 'postgres' || entry.engine === 'mysql') && entry.url) {
+    try { const u = new URL(entry.url); if (u.password) pw = decodeURIComponent(u.password); } catch { /* not a URL */ }
+  }
+  if (pw) {
     env.PGPASSWORD = pw; // pg_dump
     env.MYSQL_PWD = pw; // mysqldump
   }
@@ -81,10 +89,12 @@ export async function dumpDb(entry, dest) {
       return;
     }
     case 'mysql': {
-      const r = spawnSync('mysqldump', mysqlDumpArgs({ url: entry.url }), { env, maxBuffer: 1 << 30 });
+      // --result-file streams the dump straight to disk → constant memory (vs.
+      // buffering a multi-GB dump in a Node stdout buffer, which OOMs small VPSes).
+      const args = [...mysqlDumpArgs({ url: entry.url }), '--result-file', dest];
+      const r = spawnSync('mysqldump', args, { env, encoding: 'utf8' });
       if (r.error) { const e = /** @type {NodeJS.ErrnoException} */ (r.error); throw new Error(`mysqldump failed to start (${e.code || e.message}); is it on PATH?`); }
-      if (r.status !== 0) throw new Error(`mysqldump exited ${r.status}: ${String(r.stderr || '').trim()}`);
-      writeFileSync(dest, r.stdout);
+      if (r.status !== 0) throw new Error(`mysqldump exited ${r.status}: ${(r.stderr || '').trim()}`);
       return;
     }
     default:

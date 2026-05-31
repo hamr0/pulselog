@@ -25,6 +25,18 @@ Built and tested; not yet released.
   **never rotates**, so a bad run can't delete a good prior archive. The `sqlite`
   engine needs Node ≥ 22.5 (fails loud otherwise).
 
+### Security
+- Backup archives are created **`0600`** (owner-only) — they hold DB dumps and
+  private keys (TLS/DKIM); the dir is created `0700`. Previously `0644`.
+- The `postgres` password is **stripped from the connection URL** and routed via
+  `PGPASSWORD` env, so it never appears in `pg_dump`'s argv (process-table leak).
+- `mysqldump` writes via `--result-file` (streams to disk) instead of buffering the
+  whole dump in memory.
+- Two backup sources that would stage under the same filename now **fail loud**
+  instead of one silently overwriting the other.
+- Email header fields (`to`/`from`/`subject`) are flattened to one line, preventing
+  header injection from a newline in config-supplied values.
+
 ## [0.1.0] - 2026-05-31
 
 First functional release — published to npm via GitHub Actions OIDC trusted

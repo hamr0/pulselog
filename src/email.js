@@ -54,6 +54,10 @@ const has = (cmd) => spawnSync('sh', ['-c', `command -v ${cmd}`], { stdio: 'igno
  * @returns {'mail'|'sendmail'|'none'}
  */
 export function sendEmail({ to, from, subject, body }) {
+  // Header fields must be single-line: a newline in any of them (they can come from
+  // config) would inject extra mail headers (e.g. a Bcc:). Body may keep its newlines.
+  const oneLine = (s) => (s == null ? s : String(s).replace(/[\r\n]+/g, ' '));
+  to = oneLine(to); from = oneLine(from); subject = oneLine(subject);
   if (has('mail')) {
     const args = ['-s', subject];
     if (from) args.push('-r', from);

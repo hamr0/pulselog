@@ -164,6 +164,29 @@ test('backup: keepDays drops archives older than the window, keeps recent', asyn
   assert.ok(remaining.includes('k-20260520-000000.tar.gz'), '2-day-old kept');
 });
 
+// ── security regressions ─────────────────────────────────────────────────────
+test('backup[sec]: archive is created 0600 — it holds dumps + private keys', async (t) => {
+  const dir = tmp(t);
+  const secret = join(dir, 'secret'); mkdirSync(secret); writeFileSync(join(secret, 'dkim.key'), 'PRIVATE');
+  const out = join(dir, 'out');
+  const r = await runBackup({ configPath: writeConfig(dir, { dir: out, name: 'b', keepLast: 1, include: [secret] }) });
+  assert.equal(statSync(r.archive).mode & 0o777, 0o600, 'archive must be owner-only');
+});
+
+test('backup[sec]: two sources staging under the same name → rejects (no silent overwrite)', async (t) => {
+  const dir = tmp(t);
+  mkdirSync(join(dir, 'a', 'cfg'), { recursive: true }); writeFileSync(join(dir, 'a', 'cfg', 'x'), 'A');
+  mkdirSync(join(dir, 'b', 'cfg'), { recursive: true }); writeFileSync(join(dir, 'b', 'cfg', 'x'), 'B');
+  const cfg = writeConfig(dir, { dir: join(dir, 'out'), name: 'b', keepLast: 1, include: [join(dir, 'a', 'cfg'), join(dir, 'b', 'cfg')] });
+  await assert.rejects(runBackup({ configPath: cfg }), /collision/);
+});
+
+test('dumpers[sec]: pg_dump strips an embedded URL password from argv (no process-table leak)', () => {
+  const a = pgDumpArgs({ url: 'postgres://u:s3cret@h:5432/db', dest: '/s/d.dump' });
+  assert.ok(!a.some((x) => /s3cret/.test(x)), 'password must never appear in argv');
+  assert.ok(a.some((x) => x.includes('postgres://u@h:5432/db')), 'connection still passed, password removed');
+});
+
 // ── validation ───────────────────────────────────────────────────────────────
 test('backup: no source (db|include|command) → rejects', async (t) => {
   const dir = tmp(t);

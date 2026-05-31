@@ -7,7 +7,7 @@
 // quiet — and NEVER rotates, so a bad run can't delete a good prior archive.
 import {
   readFileSync, mkdirSync, mkdtempSync, cpSync, existsSync, statSync,
-  renameSync, rmSync, readdirSync,
+  renameSync, rmSync, readdirSync, chmodSync,
 } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join, basename } from 'node:path';
@@ -78,16 +78,25 @@ export async function runBackup({ configPath, now = Date.now() }) {
   const startedMs = now;
   /** @type {string[]} */
   const skipped = [];
+  // Two sources that stage under the same name would silently overwrite each other
+  // (one source lost from the backup). Claim each name; collide → fail loud.
+  const used = new Set();
+  const claim = (n) => {
+    if (used.has(n)) throw new Error(`backup source collision: two sources stage as "${n}" — give one a distinct name/path`);
+    used.add(n);
+  };
 
-  mkdirSync(b.dir, { recursive: true });
-  const stage = mkdtempSync(join(b.dir, '.stage-')); // stage IN dir (a tmpfs /tmp can OOM on a big dump)
+  mkdirSync(b.dir, { recursive: true, mode: 0o700 }); // new dir owner-only (no-op if it already exists)
+  const stage = mkdtempSync(join(b.dir, '.stage-')); // stage IN dir (a tmpfs /tmp can OOM on a big dump); mkdtemp is 0700
 
   try {
     // 1. built-in db dumps (safe defaults) → the stage
     for (let i = 0; i < dbs.length; i++) {
       const d = dbs[i];
       if (d.optional && d.engine === 'sqlite' && !existsSync(d.path)) { skipped.push(d.path); continue; }
-      await dumpDb(d, join(stage, dbDest(d, i)));
+      const destName = dbDest(d, i);
+      claim(destName);
+      await dumpDb(d, join(stage, destName));
     }
 
     // 2. static includes (symlinks preserved); required missing → fail loud, optional → skip+record
@@ -96,7 +105,9 @@ export async function runBackup({ configPath, now = Date.now() }) {
         if (inc.optional) { skipped.push(inc.path); continue; }
         throw new Error(`required include path missing: ${inc.path}`);
       }
-      cpSync(inc.path, join(stage, basename(inc.path)), { recursive: true, verbatimSymlinks: true });
+      const name = basename(inc.path);
+      claim(name);
+      cpSync(inc.path, join(stage, name), { recursive: true, verbatimSymlinks: true });
     }
 
     // 3. command opt-out — the adopter's dump writes into $PULSELOG_STAGE
@@ -115,6 +126,7 @@ export async function runBackup({ configPath, now = Date.now() }) {
     const tmp = `${archive}.tmp`;
     const tarRes = spawnSync('tar', ['-czf', tmp, '-C', stage, '.'], { encoding: 'utf8' });
     if (tarRes.status !== 0) { rmSync(tmp, { force: true }); throw new Error(`tar failed: ${(tarRes.stderr || '').trim()}`); }
+    chmodSync(tmp, 0o600); // the archive holds DB dumps + private keys (certs/DKIM) — owner-only, never group/world-readable
     const bytes = statSync(tmp).size;
     if (b.minBytes && bytes < b.minBytes) {
       rmSync(tmp, { force: true });
