@@ -8,7 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 Work toward `0.2.0` (a third mode — backups; see the PRD in `docs/01-product`).
-Nothing released yet.
+Built and tested; not yet released.
+
+### Added
+- **Backup mode** (`pulselog --backup --config <file>`) — one scheduled run that
+  stages sources into a fresh `$PULSELOG_STAGE`, tars them, publishes atomically
+  (`.tmp`→`mv`), enforces a `minBytes` integrity floor, and rolls retention
+  (`keepLast` count and/or `keepDays` age) over its **own** `<name>-*` archives only.
+  Three source kinds: **`db`** — curated safe-default dumps for the common OSS engines
+  (`sqlite` via bundled node:sqlite `VACUUM INTO`; `postgres` via `pg_dump -Fc`;
+  `mysql`/MariaDB via `mysqldump --single-transaction`), each encoding the consistency
+  opinion; **`include`** — a static file/dir copy (certs/configs/keys), symlinks
+  preserved, each path required (missing → fail) or `{path,optional:true}` (skip +
+  record); and **`command`** — the opt-out for anything else. Writes one
+  `kind:"backup"` line; **a failed run records, alerts, and exits `1` (loud)** and
+  **never rotates**, so a bad run can't delete a good prior archive. The `sqlite`
+  engine needs Node ≥ 22.5 (fails loud otherwise).
 
 ## [0.1.0] - 2026-05-31
 

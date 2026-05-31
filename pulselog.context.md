@@ -2,23 +2,27 @@
 
 A scheduled **external** watcher for the apps you run — the outside sibling to
 [flightlog](https://github.com/hamr0/flightlog) (which records errors from *inside*
-your app). You point a cron job or systemd timer at it. It has two modes:
+your app). You point a cron job or systemd timer at it. It has three modes — the triad
+**health** (is it up) · **stats** (how's it trending) · **backup** (is it safe):
 
 - **health** — "is it up right now?" Probe HTTP/TCP/TLS/disk/backups/systemd on a
   schedule; **stay silent when green**; email **one** summary when something breaks.
 - **digest** — "how is it trending?" Once a week, collect a few **foundational
   numbers you declare**, append one snapshot line to a history log, and email a
   week-over-week table — optionally with a flightlog error summary.
+- **backup** — "is it safe?" Stage **curated DB dumps** (sqlite/postgres/mysql) plus
+  static **includes** (certs, configs, keys) into one archive, tar atomically,
+  enforce a size floor, and roll retention. A failed run **exits `1` (loud)**.
 
 Every signal is **one JSON line** in flightlog's core dialect (`ts`, `kind`, …), so
 `tail`/`jq`/an uploader work across all your streams. Zero production dependencies
 (`node:*` + global `fetch`). No daemon, no SaaS, no telemetry.
 
-This file is the complete contract: every option, both modes, what pulselog
+This file is the complete contract: every option, all three modes, what pulselog
 deliberately does **not** do, the privacy model, and the gotchas.
 
-> **Status:** building toward `0.1.0` (see the CHANGELOG). `0.0.1` is a name
-> placeholder that throws on import — don't depend on it.
+> **Status:** `0.1.0` (health + digest) is published. **`backup` (`--backup`) is
+> built and lands in `0.2.0`** — documented here; not on npm until 0.2.0 publishes.
 
 ## What pulselog is and is NOT
 
@@ -26,8 +30,10 @@ deliberately does **not** do, the privacy model, and the gotchas.
   `systemctl`, `df`, a SQL `count`), generalized into config-driven mechanism.
 - It is **not** a daemon/scheduler (you bring cron/systemd), **not** a log
   aggregator/shipper/SIEM, **not** a metrics database/dashboard, **not** an uptime
-  SaaS, **not** an alerting platform (one email, no paging/routing), and **not** a
-  transport (it never uploads — shipping the JSONL is a separate layer you build).
+  SaaS, **not** an alerting platform (one email, no paging/routing), **not** a backup
+  *engine* (it wraps your dump + tars/rotates; off-host copy, encryption, and
+  restore-testing stay the operator's job), and **not** a transport (it never
+  uploads — shipping the JSONL is a separate layer you build).
 - **Mechanism is in pulselog; policy and data are yours.** You choose which checks
   run and which numbers to watch; pulselog never invents either, and never stores
   anything you didn't ask it to.
@@ -38,9 +44,10 @@ deliberately does **not** do, the privacy model, and the gotchas.
 |---|---|---|
 | To be emailed when the app/DB/cert/backup breaks | `health` | often (e.g. every 5 min) |
 | A weekly "is it growing?" stats email + error summary | `digest` | weekly |
+| Safe, rotated archives of your DBs + certs/configs | `backup` | nightly |
 
-Both read **one** config file (`pulselog.config.json` — one source of truth) with
-separate sections; the mode flag picks which section runs.
+All read **one** config file (`pulselog.config.json` — one source of truth) with
+separate sections (`checks` / `digest` / `backup`); the mode flag picks which runs.
 
 ```
 pulselog --config ./pulselog.config.json            # health (default)
@@ -169,14 +176,83 @@ area is noisy (e.g. `ApiTimeout` vs `SmtpAuthError`), not just *that* something 
 
 ---
 
+## Backup mode
+
+> Built; ships in `0.2.0`. `pulselog --backup --config ./backup.config.json`.
+
+One scheduled run stages your state into a fresh, private staging dir
+(`$PULSELOG_STAGE`), tars it to one archive, **publishes atomically**, enforces a
+size floor, and rolls retention. pulselog owns the **envelope**; you declare the
+**sources**. At least one source (`db` / `include` / `command`) is required.
+
+```jsonc
+"backup": {
+  "app":  "myapp",
+  "dir":  "/var/lib/myapp/backups",        // archives live here, its OWN dir → <name>-<UTC stamp>.tar.gz
+  "name": "myapp-backup",                   // archive prefix (also the retention key)
+
+  "db": [                                   // (A) curated safe-default dumps — see the table below
+    { "engine": "sqlite",   "path": "/var/lib/myapp/app.db", "name": "app" },
+    { "engine": "sqlite",   "path": "/var/lib/myapp/cache.db", "optional": true }, // absent file → skip+record
+    { "engine": "postgres", "url": "postgres://u@/app", "passwordEnv": "PGPASSWORD" },
+    { "engine": "mysql",    "url": "mysql://u@host:3306/app", "passwordEnv": "MYSQL_PWD" }
+  ],
+  "include": [                              // (B) static copy into the stage (symlinks preserved)
+    "/etc/letsencrypt",                     //     string = REQUIRED (missing → fail loud, exit 1)
+    { "path": "/etc/myapp/optional.d", "optional": true }   // {path,optional} = skip + record if missing
+  ],
+  "command": "node", "args": ["dump.mjs"],  // (C) opt-out: your own dump writes into $PULSELOG_STAGE
+  "timeoutMs": 600000,                       //     optional cap on the command
+
+  "keepLast": 7,                            // retention: keep newest N …
+  "keepDays": 30,                           //   … and/or newer-than-D days (≥1 required; union — never deletes what a rule keeps)
+  "minBytes": 1024,                         // integrity floor — a smaller archive fails the run (no publish, no rotation)
+  "history": "/var/lib/myapp/backup.jsonl", // one kind:"backup" line per run, its OWN file (0600)
+  "email": "ops@example.com", "from": "alerts@myapp.com"   // alert on FAILURE only; omit → the line is the record
+}
+```
+
+**Built-in `db` engines** — the safe default *encodes the consistency opinion* (the
+value over a hand-rolled command). The tool must be on `PATH` (else the run fails
+loud) except `sqlite`, which is in-process:
+
+| `engine` | pulselog runs | Output in stage | Connection |
+|---|---|---|---|
+| `sqlite` | `node:sqlite` `VACUUM INTO` (online, checkpoints WAL; **needs Node ≥ 22.5**) | `<label>.db` | `path` |
+| `postgres` | `pg_dump -Fc` (custom format: compressed, selective restore) | `<label>.dump` | `url` (+ `passwordEnv`) |
+| `mysql` | `mysqldump --single-transaction --quick --routines --triggers` (MySQL **and** MariaDB) | `<label>.sql` | `url` (+ `passwordEnv`) |
+
+`label` is the entry's `name`, else `<engine>-<index>`. `passwordEnv` names an env var
+holding the password; pulselog passes it as `PGPASSWORD`/`MYSQL_PWD` to the child only.
+
+**Dump cookbook (the `command` opt-out)** — for engines pulselog doesn't bundle, your
+`command` writes whatever it needs into `$PULSELOG_STAGE` and exits non-zero on
+failure:
+
+```jsonc
+// MongoDB:        "command": "sh", "args": ["-c", "mongodump --archive=\"$PULSELOG_STAGE/mongo.archive\" --gzip"]
+// Redis/Valkey:   "command": "sh", "args": ["-c", "redis-cli --rdb \"$PULSELOG_STAGE/dump.rdb\""]
+// Postgres roles: "command": "sh", "args": ["-c", "pg_dumpall --globals-only > \"$PULSELOG_STAGE/globals.sql\""]
+```
+
+**Lifecycle, in order:** stage `db` dumps → copy `include`s → run `command` → `tar`
+→ size floor → atomic `mv` → retention (only `<name>-*.tar.gz` in `dir`, **never** on a
+failed run) → one `kind:"backup"` line. **Honesty boundary:** pulselog asserts the dump
+ran and the archive is ≥ `minBytes` — **not** restorability. Off-host copy, encryption,
+and restore-testing are yours (a `command` exiting 0 on a truncated dump is why the
+size floor + recorded `bytes` exist). A health `file-age` check on `dir` (with
+`recursive` for date-stamped layouts) is the belt-and-suspenders "did backups stop?"
+net.
+
 ## The shared JSONL dialect
 
 `kind` tells the streams apart: `uncaught`/`manual` (flightlog), `health` (pulselog
-health), `stats` (pulselog digest). Each writer owns its **own** file — two processes
-must not append one file (rotation races, perms). Compose at read time:
+health), `stats` (pulselog digest), `backup` (pulselog backup). Each writer owns its
+**own** file — two processes must not append one file (rotation races, perms). Compose
+at read time:
 
 ```sh
-jq -s 'sort_by(.ts)' errors.jsonl health.jsonl stats.jsonl   # one timeline across all three
+jq -s 'sort_by(.ts)' errors.jsonl health.jsonl stats.jsonl backup.jsonl   # one timeline across all
 ```
 
 ## Email transport
@@ -190,9 +266,12 @@ record.
 ## Exit codes
 
 - **0** — the run completed (any health failures were emailed + logged; the digest
-  ran). Keeps cron quiet on a normal failure; the alert is the signal.
-- **1** — the run itself couldn't proceed (missing/invalid config). Surfaces loudly
-  via cron/systemd so a misconfiguration isn't silent.
+  ran; the backup succeeded). Keeps cron quiet on a normal health failure; the alert
+  is the signal.
+- **1** — the run itself couldn't proceed (missing/invalid config) **— or a backup
+  failed.** Backup diverges on purpose (D15): producing the archive *is* the job, so
+  failing to produce it is a loud failure (like a bad config), never a quiet one.
+  Surfaces via cron/systemd so a missing backup isn't silent.
 
 ## Privacy & threat model
 
