@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Work toward `0.2.0` (a third mode — backups; see the PRD in `docs/01-product`).
-Built and tested; not yet released.
+## [0.2.0] - 2026-05-31
+
+A third mode — **backups** (see the PRD in `docs/01-product`). Published to npm via
+GitHub Actions OIDC trusted publishing (signed provenance, no token). Still zero
+production dependencies (`node:*` + global `fetch`).
 
 ### Added
 - **Backup mode** (`pulselog --backup --config <file>`) — one scheduled run that
@@ -23,7 +26,10 @@ Built and tested; not yet released.
   record); and **`command`** — the opt-out for anything else. Writes one
   `kind:"backup"` line; **a failed run records, alerts, and exits `1` (loud)** and
   **never rotates**, so a bad run can't delete a good prior archive. The `sqlite`
-  engine needs Node ≥ 22.5 (fails loud otherwise).
+  engine needs Node ≥ 22.5 (fails loud otherwise). A `db` source that omits its
+  connection field (`path` for `sqlite`, `url` for `postgres`/`mysql`) or names an
+  engine outside the built-in trio **fails loud with the field named** — never a
+  half-empty archive.
 
 ### Security
 - Backup archives are created **`0600`** (owner-only) — they hold DB dumps and
@@ -82,6 +88,7 @@ publishing (signed provenance, no token). Zero production dependencies
   throws on import, directing users to the repo. Reserves `pulselog` while `0.1.0`
   is built.
 
-[Unreleased]: https://github.com/hamr0/pulselog/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/hamr0/pulselog/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/hamr0/pulselog/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/hamr0/pulselog/compare/v0.0.1...v0.1.0
 [0.0.1]: https://github.com/hamr0/pulselog/releases/tag/v0.0.1

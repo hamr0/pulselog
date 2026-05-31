@@ -21,8 +21,8 @@ Every signal is **one JSON line** in flightlog's core dialect (`ts`, `kind`, …
 This file is the complete contract: every option, all three modes, what pulselog
 deliberately does **not** do, the privacy model, and the gotchas.
 
-> **Status:** `0.1.0` (health + digest) is published. **`backup` (`--backup`) is
-> built and lands in `0.2.0`** — documented here; not on npm until 0.2.0 publishes.
+> **Status:** `0.2.0` is published — all three modes (health + digest + **`backup`**)
+> are on npm.
 
 ## What pulselog is and is NOT
 
@@ -178,7 +178,7 @@ area is noisy (e.g. `ApiTimeout` vs `SmtpAuthError`), not just *that* something 
 
 ## Backup mode
 
-> Built; ships in `0.2.0`. `pulselog --backup --config ./backup.config.json`.
+> Shipped in `0.2.0`. `pulselog --backup --config ./backup.config.json`.
 
 One scheduled run stages your state into a fresh, private staging dir
 (`$PULSELOG_STAGE`), tars it to one archive, **publishes atomically**, enforces a
@@ -319,6 +319,19 @@ return and what goes in `alert.app` / context.
   appends exactly one line to `history`.
 - **`history` is append-only and not rotated** — it's the long-term record (~52
   lines/year). Don't point `maxBytes` rotation at it; it's tiny.
+- **The `sqlite` *backup* engine needs Node ≥ 22.5 (backup).** It uses the bundled
+  `node:sqlite` `VACUUM INTO`; on older Node it fails loud. The package floor is Node
+  ≥ 18 for health/digest — only the sqlite backup path needs 22.5. Upgrade Node, or
+  dump SQLite through a `command`.
+- **Each `db` source needs its connection field (backup).** `sqlite` needs `path`;
+  `postgres`/`mysql` need `url`. A `db` entry missing that field — or naming an engine
+  outside the built-in trio (`sqlite`/`postgres`/`mysql`) — fails loud with the field
+  named, rather than producing a half-empty archive. Everything else goes through
+  `command`.
+- **Retention requires `keepLast` and/or `keepDays` (backup).** With neither set the
+  run refuses to start, so a backup `dir` can never accumulate unbounded silently. A
+  too-small archive (`minBytes`) fails the run — it is neither published nor rotated,
+  so a truncated dump can't evict a good prior archive.
 
 ## What pulselog will not do (the refusals *are* the product)
 
