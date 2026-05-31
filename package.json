@@ -1,0 +1,45 @@
+{
+  "name": "pulselog",
+  "version": "0.1.0",
+  "description": "Zero-dependency health watcher: probe APIs/DBs/backups/SSL/services on a schedule, stay silent when green, email on failure, and emit each result as one JSONL line (flightlog-compatible).",
+  "type": "module",
+  "main": "./src/index.js",
+  "bin": {
+    "pulselog": "./bin/pulselog.js"
+  },
+  "files": [
+    "src/",
+    "bin/",
+    "config.example.json",
+    "README.md",
+    "pulselog.context.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "health",
+    "healthcheck",
+    "monitoring",
+    "uptime",
+    "jsonl",
+    "ssl",
+    "zero-dependency",
+    "cron",
+    "systemd"
+  ],
+  "author": "Amr <avoidaccess@msn.com>",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/hamr0/pulselog#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hamr0/pulselog.git"
+  },
+  "bugs": {
+    "url": "https://github.com/hamr0/pulselog/issues"
+  }
+}

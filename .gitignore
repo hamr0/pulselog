@@ -1,0 +1,21 @@
+# dependencies
+node_modules/
+
+# generated types (built on publish per LIBRARY_CONVENTIONS)
+/types/
+
+# packed tarballs
+*.tgz
+
+# npm debug logs
+npm-debug.log*
+
+# runtime error logs (incl. POC output)
+*.jsonl
+
+# env
+.env
+
+# local working state (stash + machine-local settings; memory/*.md are tracked)
+.claude/stash/
+.claude/settings.local.json

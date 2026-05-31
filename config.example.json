@@ -1,0 +1,22 @@
+{
+  "output": {
+    "file": "/var/lib/myapp/health.jsonl",
+    "maxBytes": 5000000,
+    "heartbeat": false
+  },
+  "alert": {
+    "email": "ops@example.com",
+    "from": "alerts@myapp.com",
+    "app": "myapp",
+    "logTail": "/var/lib/myapp/errors.jsonl"
+  },
+  "checks": [
+    { "type": "http", "name": "api", "enabled": true, "url": "http://127.0.0.1:3000/api/health", "expectStatus": 200, "timeoutMs": 5000 },
+    { "type": "tcp", "name": "postgres", "enabled": true, "host": "127.0.0.1", "port": 5432 },
+    { "type": "ssl", "name": "cert", "enabled": true, "host": "myapp.com", "port": 443, "warnDays": 14 },
+    { "type": "disk", "name": "disk", "enabled": true, "path": "/var/lib/myapp", "maxPercent": 85 },
+    { "type": "file-age", "name": "backup", "enabled": true, "path": "/var/lib/myapp-backups", "maxAgeHours": 26, "pattern": ".sqlite" },
+    { "type": "service", "name": "postfix", "enabled": false, "unit": "postfix.service" },
+    { "type": "command", "name": "mailq-depth", "enabled": false, "command": "sh", "args": ["-c", "test $(mailq | grep -c '^[A-F0-9]') -lt 50"] }
+  ]
+}
