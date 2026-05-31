@@ -56,7 +56,7 @@ export function tcp(cfg) {
     socket.setTimeout(timeoutMs);
     socket.once('connect', () => finish(true, `connected ${host}:${port}`));
     socket.once('timeout', () => finish(false, `timeout after ${secs(timeoutMs)}s connecting ${host}:${port}`));
-    socket.once('error', (err) => finish(false, `${err.code || err.message} connecting ${host}:${port}`));
+    socket.once('error', (/** @type {NodeJS.ErrnoException} */ err) => finish(false, `${err.code || err.message} connecting ${host}:${port}`));
   });
 }
 

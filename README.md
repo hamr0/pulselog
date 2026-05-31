@@ -13,6 +13,7 @@
 > **Zero** production dependencies (`node:*` + global `fetch`), Node >= 18. No daemon, no SaaS, no telemetry — run it from cron or a systemd timer. The JSONL *is* the interface.
 
 <p align="center">
+  <a href="https://github.com/hamr0/pulselog/actions/workflows/ci.yml"><img src="https://github.com/hamr0/pulselog/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/github/package-json/v/hamr0/pulselog?label=version&color=2a4f8c" alt="version (auto from package.json)">
   <img src="https://img.shields.io/badge/license-Apache%202.0-2a4f8c" alt="license: Apache 2.0">
 </p>
@@ -96,6 +97,8 @@ jq -s 'sort_by(.ts)' errors.jsonl health.jsonl stats.jsonl
 ```
 
 JSONL files are created `0600` (owner-only) so data isn't world-readable on a shared host. **Exit codes:** `0` when a run completed (failures are emailed + logged — the alert is the signal, so cron stays quiet); `1` only when the run itself couldn't proceed (missing/invalid config), so a misconfiguration surfaces loudly.
+
+18 tests pass on CI (Node 22) — health checks (live local HTTP server, tmp files) and digest (metric parse, ISO-week WoW, the flightlog 7-day rollup, render, and a **mutation-tested privacy invariant**: an error's message/stack must never reach the history line or the email). Ships TypeScript types generated from JSDoc — `import { run, runDigest } from "pulselog"` gives autocomplete out of the box.
 
 ## Docs
 

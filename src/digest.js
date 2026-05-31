@@ -30,6 +30,7 @@ export function runDigest({ configPath, dryRun = false, now = Date.now() }) {
   const metricNames = d.metrics.map((m) => m.name);
 
   // 1. collect declared metrics → snapshot values (broken → null)
+  /** @type {Record<string, number|null>} */
   const metrics = {};
   for (const m of d.metrics) metrics[m.name] = runMetric(m);
 
@@ -44,6 +45,7 @@ export function runDigest({ configPath, dryRun = false, now = Date.now() }) {
   }
 
   // 3. the weekly snapshot line (the record): metrics + optional error summary
+  /** @type {Record<string, any>} */
   const snapshot = { ts, kind: 'stats', app, ...metrics };
   if (flightlog) snapshot.errors = flightlog;
 
@@ -67,6 +69,7 @@ export function runDigest({ configPath, dryRun = false, now = Date.now() }) {
 
   // 5. deliver: print on dry-run; skip a flat week if asked; else email if a
   //    recipient is set; otherwise the history line is the artifact.
+  /** @type {'mail'|'sendmail'|'none'|'skipped'|'dry-run'} */
   let delivered;
   if (dryRun) {
     process.stdout.write(`Subject: ${subject}\n\n${body}\n`);

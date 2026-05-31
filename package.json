@@ -1,21 +1,32 @@
 {
   "name": "pulselog",
   "version": "0.1.0",
-  "description": "Zero-dependency health watcher: probe APIs/DBs/backups/SSL/services on a schedule, stay silent when green, email on failure, and emit each result as one JSONL line (flightlog-compatible).",
+  "description": "Zero-dependency scheduled external watcher: health checks (APIs/DBs/backups/SSL/services) + a weekly stats digest. Silent when green, email on signal, one JSONL line per result (flightlog-compatible).",
   "type": "module",
   "main": "./src/index.js",
+  "types": "./types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./types/index.d.ts",
+      "default": "./src/index.js"
+    }
+  },
   "bin": {
     "pulselog": "./bin/pulselog.js"
   },
   "files": [
     "src/",
     "bin/",
+    "types/",
     "config.example.json",
     "README.md",
     "pulselog.context.md",
     "CHANGELOG.md"
   ],
   "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build:types": "tsc",
+    "prepublishOnly": "npm run build:types",
     "test": "node --test"
   },
   "engines": {
@@ -26,6 +37,8 @@
     "healthcheck",
     "monitoring",
     "uptime",
+    "digest",
+    "stats",
     "jsonl",
     "ssl",
     "zero-dependency",
@@ -41,5 +54,9 @@
   },
   "bugs": {
     "url": "https://github.com/hamr0/pulselog/issues"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.19",
+    "typescript": "^5.9.3"
   }
 }

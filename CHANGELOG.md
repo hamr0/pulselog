@@ -31,6 +31,11 @@ Work toward the first functional release, **`0.1.0`** (see the PRD in
 - Records use flightlog's core JSONL dialect (`ts`, `kind`, …) so one toolset reads
   errors, health, and stats; each writer keeps its **own** file, merged at read time
   with `jq`.
+- **TypeScript types generated from JSDoc** (`types/*.d.ts`, built on publish) — the
+  package ships type definitions, so `import { run, runDigest } from "pulselog"` gives
+  autocomplete and type-checking with no `@types` package. The programmatic surface is
+  `run` (health), `runDigest` (digest), `CHECKS`, `createSink`, `assembleEmail`,
+  `sendEmail`; the CLI in `bin/` is the usual entry point.
 
 ### Security
 - JSONL files are created `0600` (owner read/write only) so health/stats data isn't
