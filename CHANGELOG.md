@@ -7,8 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-Work toward the first functional release, **`0.1.0`** (see the PRD in
-`docs/01-product`). Not yet published. Zero production dependencies
+Work toward `0.2.0` (a third mode — backups; see the PRD in `docs/01-product`).
+Nothing released yet.
+
+## [0.1.0] - 2026-05-31
+
+First functional release — published to npm via GitHub Actions OIDC trusted
+publishing (signed provenance, no token). Zero production dependencies
 (`node:*` + global `fetch`), Node ≥ 18.
 
 ### Added
@@ -50,5 +55,6 @@ Work toward the first functional release, **`0.1.0`** (see the PRD in
   throws on import, directing users to the repo. Reserves `pulselog` while `0.1.0`
   is built.
 
-[Unreleased]: https://github.com/hamr0/pulselog/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/hamr0/pulselog/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/hamr0/pulselog/compare/v0.0.1...v0.1.0
 [0.0.1]: https://github.com/hamr0/pulselog/releases/tag/v0.0.1
