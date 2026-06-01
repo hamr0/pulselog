@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-06-01
+
+Documentation + packaging only — no API or behavior change. Transport and off-host
+guidance hardened from the first-adopter (gitdone) pass, and `examples/` now ships in
+the package.
+
+### Packaged
+- **`examples/` is now in the published tarball** (`files` whitelist) — so the new
+  `examples/pull-restricted.sh`, referenced from `pulselog.context.md`, resolves for
+  npm readers, not just on GitHub.
+
+### Documented
+- **Email transport caveats** — pulselog's alert/digest mail is plain `sendmail`,
+  **unsigned** (no DKIM/SPF of its own); deliverability rides entirely on the operator's
+  MTA/relay, so reputation-sensitive alerts should sit behind a signing relay plus a
+  secondary signal. Also surfaced the existing **header-field flattening** (`to`/`from`/
+  `subject` have `\r`/`\n` stripped to prevent header injection from config values) in
+  the contract, not just the 0.2.0 security notes. Added a concrete **msmtp → Gmail**
+  transport recipe (the documented shim, now with a copy-paste `~/.msmtprc` + the
+  `from`-alignment / app-password / `msmtp-mta` gotchas).
+- **Off-host pull hardening** — a backup gotcha (pull, don't push; the box holds no key
+  to the off-host copy it could be coerced into deleting) plus
+  `examples/pull-restricted.sh`, a read-only forced-command SSH key that streams only
+  the newest `<name>-*.tar.gz`.
+
 ## [0.3.0] - 2026-06-01
 
 A batch metric source for the digest, plus documentation hardening from the first
@@ -119,7 +144,8 @@ publishing (signed provenance, no token). Zero production dependencies
   throws on import, directing users to the repo. Reserves `pulselog` while `0.1.0`
   is built.
 
-[Unreleased]: https://github.com/hamr0/pulselog/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/hamr0/pulselog/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/hamr0/pulselog/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/hamr0/pulselog/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/hamr0/pulselog/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/hamr0/pulselog/compare/v0.0.1...v0.1.0

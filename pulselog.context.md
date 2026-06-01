@@ -21,8 +21,10 @@ Every signal is **one JSON line** in flightlog's core dialect (`ts`, `kind`, …
 This file is the complete contract: every option, all three modes, what pulselog
 deliberately does **not** do, the privacy model, and the gotchas.
 
-> **Status:** `0.3.0` is published — all three modes (health + digest + **`backup`**)
-> are on npm; the digest gained a batch `metricsCommand` source.
+> **Status:** `0.3.1` is published — all three modes (health + digest + **`backup`**)
+> are on npm; the digest has a batch `metricsCommand` source. `0.3.1` adds
+> transport-deliverability + off-host-pull doc hardening and ships `examples/` (docs +
+> packaging only, no API change).
 
 ## What pulselog is and is NOT
 
@@ -344,6 +346,56 @@ sendmail shim such as **msmtp** (`msmtp` + an `msmtprc`) — your choice of tran
 With no mailer present, pulselog warns once to stderr and the JSONL line remains the
 record.
 
+> **Deliverability is your MTA's job, not pulselog's.** pulselog's own alert/digest
+> mail is **plain `sendmail`, unsigned** — it adds no DKIM signature or SPF alignment
+> of its own. Whether an alert lands in the inbox or the spam folder rides entirely on
+> the transport you put behind `mail`/`sendmail`. For reputation-sensitive alerts,
+> point the shim at a relay that **signs (DKIM) and has clean IP reputation**, and keep
+> a secondary signal (the JSONL line, or a `file-age` dead-man's-switch on a reachable
+> host) so a spam-foldered alert isn't your only notice.
+
+> **Header fields are flattened to one line.** `to`/`from`/`subject` come from config,
+> so a newline in any of them could otherwise inject extra mail headers (e.g. a smuggled
+> `Bcc:`). pulselog strips `\r`/`\n` from those three fields before handing them to
+> `mail`/`sendmail`; the body keeps its newlines. Nothing to configure — just know the
+> values are sanitized.
+
+### Recipe: msmtp → Gmail (simple, OSS, signed)
+
+A good zero-fuss transport on a box with no MTA. msmtp is OSS, and routing through
+Gmail means Gmail **DKIM-signs** the mail with clean IP reputation — so it satisfies
+the deliverability note above rather than working around it. Install `msmtp` **and
+`msmtp-mta`** (the latter provides the `/usr/sbin/sendmail` symlink pulselog's fallback
+calls), then `~/.msmtprc` (`chmod 0600` — it holds a credential):
+
+```ini
+defaults
+tls on
+tls_starttls on
+logfile ~/.msmtp.log
+
+account gmail
+host smtp.gmail.com
+port 587
+auth on
+user you@gmail.com
+from you@gmail.com
+passwordeval "cat ~/.msmtp-gmail-apppass"   # app password in a 0600 file (or a keyring lookup) — not plaintext here
+account default : gmail
+```
+
+…and set pulselog's `from` to the **same** address (`"from": "you@gmail.com"`).
+
+- **App password, not your account password** — Gmail needs 2FA + a generated app
+  password for SMTP.
+- **`from` must equal the authenticated Gmail address** (or a verified "Send mail as"
+  alias), or Gmail rewrites `From:` and alignment breaks — so keep msmtprc `from` and
+  pulselog's config `from` identical.
+- **Ordering:** pulselog tries `mail` before `sendmail`. On a minimal box (msmtp +
+  `msmtp-mta`, no `bsd-mailx`) the `sendmail` path fires cleanly. If `mail` is also
+  installed and you want it to use msmtp too, set `sendmail=/usr/bin/msmtp` in its rc.
+- Gmail SMTP caps ~500 msgs/day — irrelevant for alerts, but it's not a bulk relay.
+
 > **On a host with no MTA, a failed backup is exactly: history line written → exit 1
 > → no email** (just the one-line stderr warning) — `sendEmail` never throws, and the
 > failure still rethrows so the CLI exits 1. So size your **dead-man's-switch** on the
@@ -425,6 +477,16 @@ return and what goes in `alert.app` / context.
   `tar`-over-a-live-tree, no worse. For a consistent capture, quiesce the writer or
   dump through a `command` that snapshots first. (The curated `db` engines *do* take a
   consistent dump — that's their whole value.)
+- **Pull the off-host copy; lock the pull key (backup).** pulselog produces the archive
+  on the box — getting it off-host (the copy that survives the box being *lost*) is
+  yours, and it should be a **pull, not a push**. If the box held a credential to write
+  the off-host copy, a compromised box could delete that copy too; a box that holds
+  *no* off-host key can't reach a backup it can't write. Restrict the remote puller's
+  SSH key to **read-only, one command** (`command="…",restrict` forced command) so a
+  compromised puller gets a single archive stream, never a shell — see
+  [`examples/pull-restricted.sh`](examples/pull-restricted.sh) (it streams the newest
+  `<name>-*.tar.gz`; pulselog makes no `latest` symlink). Pair it with a `file-age`
+  check on the pull target as the "did the backup/pull stop?" dead-man's-switch.
 
 ## What pulselog will not do (the refusals *are* the product)
 
