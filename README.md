@@ -133,7 +133,7 @@ jq -s 'sort_by(.ts)' errors.jsonl health.jsonl stats.jsonl backup.jsonl
 
 JSONL files are created `0600` (owner-only) so data isn't world-readable on a shared host. **Exit codes:** `0` when a run completed (failures are emailed + logged — the alert is the signal, so cron stays quiet); `1` only when the run itself couldn't proceed (missing/invalid config), so a misconfiguration surfaces loudly.
 
-39 tests pass on CI (Node 22) — health checks (live local HTTP server, tmp files), digest (metric parse, batch `metricsCommand`, ISO-week WoW, the flightlog 7-day rollup, render, and a **mutation-tested privacy invariant**: an error's message/stack must never reach the history line or the email), and backup (staging, atomic publish, retention, and the security regressions). Ships TypeScript types generated from JSDoc — `import { run, runDigest } from "pulselog"` gives autocomplete out of the box.
+50 tests pass on CI (Node 22) — health checks (live local HTTP server, tmp files), digest (metric parse, batch `metricsCommand`, ISO-week WoW, the flightlog 7-day rollup, render, and a **mutation-tested privacy invariant**: an error's message/stack must never reach the history line or the email), and backup (staging, atomic publish, retention, and the security regressions). Ships TypeScript types generated from JSDoc — `import { run, runDigest } from "pulselog"` gives autocomplete out of the box.
 
 ## Docs
 

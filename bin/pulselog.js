@@ -42,6 +42,9 @@ for (let i = 0; i < argv.length; i++) {
 // The config drives command execution as THIS user — often root for backups that read
 // /etc/letsencrypt or /etc/opendkim. A config someone else can write (or owns) is then
 // code execution as us, so refuse it (like ssh/sudo refuse an attacker-writable config).
+// Owner may be the running user OR root: a root-owned, non-world-writable file isn't
+// writable by a non-root reader, so it's not attacker-controlled — this matches ssh's
+// rule (owner == user or root) and lets a root-owned deploy tree serve service users.
 // Missing/unreadable → leave it to the loader below to report the canonical error.
 let cfgStat = null;
 try { cfgStat = statSync(configPath); } catch { /* loader will fail loud */ }
@@ -50,8 +53,8 @@ if (cfgStat) {
     process.stderr.write(`pulselog: refusing ${configPath}: group/world-writable (chmod go-w it)\n`);
     process.exit(1);
   }
-  if (process.getuid && cfgStat.uid !== process.getuid()) {
-    process.stderr.write(`pulselog: refusing ${configPath}: not owned by the running user (chown it)\n`);
+  if (process.getuid && cfgStat.uid !== 0 && cfgStat.uid !== process.getuid()) {
+    process.stderr.write(`pulselog: refusing ${configPath}: not owned by you or root (chown it)\n`);
     process.exit(1);
   }
 }

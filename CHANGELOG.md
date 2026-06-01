@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-06-01
+
+A one-line refinement to the `0.4.0` config-ownership gate so it matches the `ssh`
+precedent it cites. No new feature, no default change; still zero production dependencies.
+
+### Security
+- **Config-ownership gate now allows a root-owned config, not just a self-owned one.**
+  `0.4.0` refused any config the running user didn't own — which also rejected a
+  root-owned, non-world-writable config read by a non-root service user, a very common
+  deploy shape (a root-owned tree served to a service account). `ssh`/`sudo`, the cited
+  precedent, allow an owner of **the user or root** and refuse only group/world-writable
+  or third-party-owned files; `bin/pulselog.js` now does the same. A root-owned,
+  non-world-writable config isn't writable by a non-root reader, so it carries no
+  code-execution-as-that-user risk. The world-writable refusal and the
+  service-user-owned-config-read-by-root refusal are both unchanged.
+
 ## [0.4.0] - 2026-06-01
 
 Reliability + hardening from the first-adopter (gitdone) pass: a per-check timeout knob
@@ -181,7 +197,8 @@ publishing (signed provenance, no token). Zero production dependencies
   throws on import, directing users to the repo. Reserves `pulselog` while `0.1.0`
   is built.
 
-[Unreleased]: https://github.com/hamr0/pulselog/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/hamr0/pulselog/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/hamr0/pulselog/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/hamr0/pulselog/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/hamr0/pulselog/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/hamr0/pulselog/compare/v0.2.0...v0.3.0

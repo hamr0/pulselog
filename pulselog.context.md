@@ -21,10 +21,11 @@ Every signal is **one JSON line** in flightlog's core dialect (`ts`, `kind`, …
 This file is the complete contract: every option, all three modes, what pulselog
 deliberately does **not** do, the privacy model, and the gotchas.
 
-> **Status:** `0.4.0` is published — all three modes (health + digest + **`backup`**)
-> are on npm. `0.4.0` adds a per-check `timeoutMs` and opt-in in-run `retries`, and lands
-> a security pass (config-perms gate, backup dir/umask tightening, per-engine password
-> env, name-escape guards). Defaults are unchanged.
+> **Status:** `0.4.1` is published — all three modes (health + digest + **`backup`**)
+> are on npm. `0.4.0` added a per-check `timeoutMs` and opt-in in-run `retries`, and a
+> security pass (config-perms gate, backup dir/umask tightening, per-engine password env,
+> name-escape guards). `0.4.1` refines the config-ownership gate to allow a **root-owned**
+> config (not just self-owned), matching `ssh`. Defaults are unchanged.
 
 ## What pulselog is and is NOT
 
@@ -465,6 +466,10 @@ account default : gmail
   the backup `command`) execute as the pulselog user — often **root** for backups that
   read `/etc/letsencrypt` or `/etc/opendkim`. Keep the config and any scripts it
   references owned by that user and not writable by others (else it's code execution).
+  The CLI enforces a floor: it refuses a config that is **group/world-writable** or owned
+  by **someone other than the running user or root** (the same rule `ssh` applies to its
+  keys). A root-owned, non-world-writable config is fine for a non-root service unit to
+  read — common when a root-owned deploy tree serves a service account.
 
 "Local + private" means *it never phones home* — you still own what your queries
 return and what goes in `alert.app` / context.
