@@ -5,7 +5,7 @@
 // the adopter's. A broken metric is recorded as null and never sinks the run.
 import { readFileSync } from 'node:fs';
 import { createSink } from './sink.js';
-import { runMetric, flightlogSummary, loadWeeks, renderDigest } from './metrics.js';
+import { runMetricsBatch, resolveMetric, flightlogSummary, loadWeeks, renderDigest } from './metrics.js';
 import { sendEmail } from './email.js';
 
 /** Read a file, or '' if it's missing/unreadable (a fresh app has no history yet). */
@@ -29,10 +29,14 @@ export function runDigest({ configPath, dryRun = false, now = Date.now() }) {
   const ts = new Date(now).toISOString();
   const metricNames = d.metrics.map((m) => m.name);
 
-  // 1. collect declared metrics → snapshot values (broken → null)
+  // 1. collect declared metrics → snapshot values (broken → null). An optional
+  //    `metricsCommand` emits one JSON object of named integers in a single pass;
+  //    a metric uses its own `command` if it has one, else its value comes from
+  //    that batch (by name). Only declared names ever reach the snapshot.
+  const batch = d.metricsCommand ? runMetricsBatch(d.metricsCommand) : null;
   /** @type {Record<string, number|null>} */
   const metrics = {};
-  for (const m of d.metrics) metrics[m.name] = runMetric(m);
+  for (const m of d.metrics) metrics[m.name] = resolveMetric(m, batch);
 
   // 2. optional flightlog 7-day summary — counts + names only, never log contents
   let flightlog = null;

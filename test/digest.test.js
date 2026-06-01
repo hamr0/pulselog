@@ -9,7 +9,8 @@ import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'no
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  runMetric, isoWeek, loadWeeks, flightlogSummary, fmtDelta, renderDigest,
+  runMetric, runMetricsBatch, resolveMetric,
+  isoWeek, loadWeeks, flightlogSummary, fmtDelta, renderDigest,
 } from '../src/metrics.js';
 import { runDigest } from '../src/digest.js';
 
@@ -39,6 +40,37 @@ test('runMetric: integer parsed; float/text/failed/missing → null', () => {
   assert.equal(runMetric({ command: 'echo', args: ['hello'] }), null, 'non-number → null');
   assert.equal(runMetric({ command: 'node', args: ['-e', 'process.exit(1)'] }), null, 'non-zero exit → null');
   assert.equal(runMetric({ command: 'definitely-no-such-binary-xyz', args: [] }), null, 'missing binary → null (no throw)');
+});
+
+// ── runMetricsBatch + resolveMetric: one command → many named integers ──────────
+test('runMetricsBatch: parses a flat JSON object; non-object/failed/non-JSON → null', () => {
+  assert.deepEqual(
+    runMetricsBatch({ command: 'echo', args: ['{"events":42,"orgs":7}'] }),
+    { events: 42, orgs: 7 },
+  );
+  assert.equal(runMetricsBatch({ command: 'echo', args: ['[1,2,3]'] }), null, 'array is not an object');
+  assert.equal(runMetricsBatch({ command: 'echo', args: ['42'] }), null, 'bare scalar → null');
+  assert.equal(runMetricsBatch({ command: 'echo', args: ['not json'] }), null, 'unparseable → null');
+  assert.equal(runMetricsBatch({ command: 'node', args: ['-e', 'process.exit(1)'] }), null, 'non-zero exit → null');
+  assert.equal(runMetricsBatch({ command: 'definitely-no-such-binary-xyz' }), null, 'missing binary → null (no throw)');
+});
+
+test('resolveMetric: per-command wins; else batch by name; whole-number gate on both', () => {
+  const batch = { events: 42, ratio: 3.5, flag: true, label: 'hi', orgs: '7' };
+  // a metric with its own command is spawned (back-compat)
+  assert.equal(resolveMetric({ name: 'x', command: 'echo', args: ['9'] }, batch), 9);
+  // command takes precedence even when the name also exists in the batch
+  assert.equal(resolveMetric({ name: 'events', command: 'echo', args: ['1'] }, batch), 1);
+  // batch-sourced: integer and numeric-string accepted
+  assert.equal(resolveMetric({ name: 'events' }, batch), 42);
+  assert.equal(resolveMetric({ name: 'orgs' }, batch), 7, 'numeric string coerced');
+  // batch-sourced: float / bool / non-numeric string / missing → null
+  assert.equal(resolveMetric({ name: 'ratio' }, batch), null, 'float → null');
+  assert.equal(resolveMetric({ name: 'flag' }, batch), null, 'bool never becomes 1');
+  assert.equal(resolveMetric({ name: 'label' }, batch), null, 'non-numeric string → null');
+  assert.equal(resolveMetric({ name: 'absent' }, batch), null, 'undeclared-in-batch → null');
+  // no command and no batch at all → null (never throws)
+  assert.equal(resolveMetric({ name: 'events' }, null), null);
 });
 
 // ── isoWeek: the "Thursday of the week" rule, incl. the year boundary ────────────
@@ -150,6 +182,33 @@ test('runDigest real run: appends one stats line; delivered "none" with no email
   assert.equal(recs[0].app, 'demo');
   assert.equal(recs[0].users, 42);
   assert.equal(recs[0].broken, null, 'a broken metric records null, never sinks the run');
+});
+
+test('runDigest metricsCommand: one batch pass fills several declared metrics in one snapshot', (t) => {
+  const dir = tmp(t);
+  const history = join(dir, 'stats.jsonl');
+  // one command emits all the numbers; declared metrics pick them by name. A metric
+  // with its own command still runs (and overrides the batch); a name the batch omits,
+  // or a non-integer batch value, records null — never sinks the run.
+  const cfg = writeCfg(dir, {
+    app: 'gitdone', history,
+    metricsCommand: { command: 'echo', args: ['{"events":42,"completed":18,"ratio":3.5}'] },
+    metrics: [
+      { name: 'events' },                                  // from the batch
+      { name: 'completed' },                               // from the batch
+      { name: 'ratio' },                                   // batch value is a float → null
+      { name: 'missing' },                                 // not in the batch → null
+      { name: 'pending', command: 'echo', args: ['3'] },   // own command overrides/augments
+    ],
+  });
+  const res = runDigest({ configPath: cfg, now: ANCHOR });
+  assert.deepEqual(res.metrics, { events: 42, completed: 18, ratio: null, missing: null, pending: 3 });
+  const rec = JSON.parse(readFileSync(history, 'utf8').trim());
+  assert.equal(rec.kind, 'stats');
+  assert.equal(rec.events, 42);
+  assert.equal(rec.completed, 18);
+  assert.equal(rec.pending, 3);
+  assert.equal(rec.ratio, null);
 });
 
 test('runDigest skipIfFlat: identical prior week + no flag → "skipped"', (t) => {

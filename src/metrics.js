@@ -10,6 +10,20 @@ import { spawnSync } from 'node:child_process';
 const DAY = 86_400_000;
 
 /**
+ * Coerce a value to a whole number, or `null`. Only numbers and numeric strings
+ * qualify — `true`/`[]`/`{}`/`null` are rejected (so a stray JSON bool can't become
+ * `1`, and `Number([])===0` can't sneak a zero in). The one shared gate every metric
+ * value passes through, single-command or batch.
+ * @param {unknown} v
+ * @returns {number | null}
+ */
+function asInteger(v) {
+  if (typeof v !== 'number' && typeof v !== 'string') return null;
+  const n = Number(v);
+  return Number.isInteger(n) ? n : null;
+}
+
+/**
  * Run one metric command and return a single integer, or `null` if it failed,
  * timed out, or printed something that isn't a whole number. Never throws.
  * @param {{ command: string, args?: string[], timeoutMs?: number }} metric
@@ -18,8 +32,42 @@ const DAY = 86_400_000;
 export function runMetric({ command, args = [], timeoutMs = 10_000 }) {
   const r = spawnSync(command, args, { encoding: 'utf8', timeout: timeoutMs });
   if (r.error || r.status !== 0) return null;
-  const n = Number(String(r.stdout).trim());
-  return Number.isInteger(n) ? n : null;
+  return asInteger(String(r.stdout).trim());
+}
+
+/**
+ * Run ONE command that prints a JSON object of named integers, amortizing an
+ * expensive snapshot pass (e.g. ~14 metrics computed in a single scan instead of
+ * one spawn per metric). Returns the parsed flat object as-printed — per-name
+ * integer validation happens later, in `resolveMetric`, so this stays the same
+ * "store only what you declared" contract. Returns `null` if the command failed,
+ * timed out, or stdout wasn't a JSON object (an array/scalar doesn't qualify).
+ * Never throws.
+ * @param {{ command: string, args?: string[], timeoutMs?: number }} batch
+ * @returns {Record<string, unknown> | null}
+ */
+export function runMetricsBatch({ command, args = [], timeoutMs = 10_000 }) {
+  const r = spawnSync(command, args, { encoding: 'utf8', timeout: timeoutMs });
+  if (r.error || r.status !== 0) return null;
+  let obj;
+  try { obj = JSON.parse(String(r.stdout).trim()); } catch { return null; }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
+  return obj;
+}
+
+/**
+ * Resolve one declared metric to its integer value (or `null`). A metric with its
+ * own `command` is spawned (back-compatible, one command → one integer); otherwise
+ * its value is read **by name** from a pre-run `batch` object (from
+ * `runMetricsBatch`). Either path enforces the same whole-number gate, and only
+ * declared names are ever read — pulselog still stores nothing you didn't ask for.
+ * @param {{ name: string, command?: string, args?: string[], timeoutMs?: number }} metric
+ * @param {Record<string, unknown> | null} [batch]
+ * @returns {number | null}
+ */
+export function resolveMetric(metric, batch = null) {
+  if (metric.command) return runMetric(/** @type {{command: string}} */ (metric));
+  return asInteger(batch ? batch[metric.name] : undefined);
 }
 
 /**

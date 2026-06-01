@@ -21,8 +21,8 @@ Every signal is **one JSON line** in flightlog's core dialect (`ts`, `kind`, …
 This file is the complete contract: every option, all three modes, what pulselog
 deliberately does **not** do, the privacy model, and the gotchas.
 
-> **Status:** `0.2.0` is published — all three modes (health + digest + **`backup`**)
-> are on npm.
+> **Status:** `0.3.0` is published — all three modes (health + digest + **`backup`**)
+> are on npm; the digest gained a batch `metricsCommand` source.
 
 ## What pulselog is and is NOT
 
@@ -100,8 +100,27 @@ pulselog --digest --dry-run --config …              # render the digest, don't
 > (e.g. a `/health` JSON field) go through `command` (`curl … | jq -e …`). pulselog
 > core never grows body parsing.
 
+> `service` tests `systemctl is-active` — correct for a **long-running unit** or an
+> **armed timer** (active while waiting). It is **wrong for a `oneshot` `.service`**: a
+> healthy oneshot finishes `inactive (dead)`, so `service` would report it DOWN. For
+> "did the last oneshot/timer run **succeed**?", use `command`. `systemctl is-failed`
+> exits **0 when the unit *is* failed**, so invert it through a shell (the `command`
+> check is healthy on exit 0):
+> `{ "type": "command", "command": "sh", "args": ["-c", "! systemctl is-failed --quiet my.service"] }`
+> — healthy whenever the unit is **not** failed, which includes a clean
+> dead-after-success. Add `systemctl show -p Result,ActiveExitTimestamp` if you also
+> want last-run recency. pulselog core stays `is-active`; oneshot semantics live in
+> your `command`.
+
 On a failure it appends one JSONL line **per failing check** and sends **one**
 summary email. Silent on success.
+
+> **`alert.logTail` carries payloads — by design.** When set, the alert email includes
+> the **last 20 raw lines** of that file verbatim (messages, stacks, whatever it holds).
+> That's the opposite stance from the digest's flightlog rollup (counts + names only):
+> an *actionable* alert wants the detail, but it means the alert email may contain
+> PII/secrets. Point it at a file you're willing to email, and send to a trusted
+> recipient. Omit it and the alert stays summary-only.
 
 ---
 
@@ -137,7 +156,8 @@ email) is built in. You never write a `stats.js` again.
 | `email` / `from` | — | Recipient/sender. Omit → no email; the history line is the artifact. |
 | `weeks` | `4` | How many weeks the table shows. |
 | `skipIfFlat` | `false` | `true` → skip the email when every metric is unchanged vs last week **and** nothing is flagged. |
-| `metrics[]` | — | `{ name, command, args?, timeoutMs? }`. The command must print **one integer**; anything else records `null` for that metric (noted, never fatal). Run **without a shell** (`command` + `args` array, like the health `command` check) — for a pipe/shell metric, use `"command": "sh", "args": ["-c", "… | …"]`. |
+| `metrics[]` | — | `{ name, command?, args?, timeoutMs? }`. A metric with its own `command` prints **one integer**; anything else records `null` for that metric (noted, never fatal). Run **without a shell** (`command` + `args` array, like the health `command` check) — for a pipe/shell metric, use `"command": "sh", "args": ["-c", "… | …"]`. A metric with **no** `command` is filled by name from `metricsCommand` (below). |
+| `metricsCommand` | — | Optional. `{ command, args?, timeoutMs? }` — one command that prints a **flat JSON object of named integers** in a single pass; each `metrics[]` entry without its own `command` takes its value by `name` from that object. See "Batch metrics" below. |
 | `flightlog` | — | Optional. `{ file, groupBy?, flagAtLeast? }` — see below. |
 
 **The snapshot line** appended each week (the record — metrics *and* any error
@@ -173,6 +193,46 @@ area is noisy (e.g. `ApiTimeout` vs `SmtpAuthError`), not just *that* something 
 - **Counts and names only.** pulselog never copies error **messages or stacks** into
   the digest or email — those can carry payloads/PII. flightlog stays private on the
   box; you read the detail there.
+
+### Batch metrics (one command, many numbers)
+
+By default each metric is its own `command` → one integer. If a single pass already
+computes *several* numbers (e.g. one scan over an event log yields `events`,
+`completed`, `pending`, `orgs`…), declare `metricsCommand` and let each metric pick its
+value by name instead of paying one spawn per metric:
+
+```jsonc
+"digest": {
+  "app": "gitdone",
+  "history": "/var/lib/gitdone/stats.jsonl",
+  "metricsCommand": { "command": "node", "args": ["bin/stats.js", "--metrics-json"] },
+  //                  // stdout: {"events":42,"completed":18,"pending":3,"orgs":7}
+  "metrics": [
+    { "name": "events" }, { "name": "completed" }, { "name": "pending" }, { "name": "orgs" }
+  ]
+}
+```
+
+- The command must print a **flat JSON object** (`{"name": <integer>, …}`) on stdout.
+  An array, a scalar, non-JSON, a non-zero exit, or a timeout records `null` for every
+  batch-sourced metric — same "never sinks the run" guard as a single metric.
+- **You still declare every name.** Only names in `metrics[]` reach the snapshot — a
+  key the batch emits but you didn't declare is ignored; a name you declared but the
+  batch omits (or whose value isn't a whole number — a float, bool, or string) records
+  `null`. The "store only what you read" contract is unchanged; this only amortizes an
+  expensive computation.
+- **Mix freely.** A `metrics[]` entry *with* its own `command` runs that command (and
+  overrides any same-named batch key), so you can pair one batch pass with a couple of
+  standalone metrics.
+
+### Cadence vs the table (run daily if you want)
+
+The table groups history **by ISO week — the latest snapshot in each week wins** — so
+cadence and the table are decoupled. Run `--digest` **daily** and you get finer
+history (every line is kept; `history` is never rotated) *and* free proof-of-life,
+while the WoW table still collapses to one row per week. The week's row simply reflects
+its most recent run. (If you run daily for proof-of-life, leave `skipIfFlat` **off** —
+otherwise an unchanged day sends no email, though the history line is still written.)
 
 ---
 
@@ -238,6 +298,18 @@ failure:
 // Postgres roles: "command": "sh", "args": ["-c", "pg_dumpall --globals-only > \"$PULSELOG_STAGE/globals.sql\""]
 ```
 
+A `command` is a **first-class sole source** — the "≥1 source" rule is satisfied by
+`command` alone (no `db`/`include` needed), e.g. an ssh+tar pull on a backup host.
+Three things to nail down for that setup:
+- **Write by `$PULSELOG_STAGE` (absolute), not by cwd.** pulselog exports
+  `$PULSELOG_STAGE` (the fresh `0700` staging dir) to the child but does **not** `cd`
+  into it — the command inherits pulselog's working directory (whatever cron/systemd
+  set). Always target `"$PULSELOG_STAGE/…"` explicitly; don't assume cwd is the stage.
+- **Non-zero exit aborts the whole run.** A failing `command` throws before `tar`, so
+  there is **no publish and no rotation**, a `status:"fail"` line is written, an alert
+  is attempted, and the CLI exits **1**. A prior good archive is never touched.
+- **`timeoutMs`** (optional) caps the command; on timeout it's treated as a failure.
+
 Two sources that would stage under the same filename (e.g. two different dirs both named
 `config`) **fail loud** rather than one silently overwriting the other — give one a
 distinct `name`/path.
@@ -271,6 +343,15 @@ client, no credentials in pulselog. If your box has neither, add a lightweight
 sendmail shim such as **msmtp** (`msmtp` + an `msmtprc`) — your choice of transport.
 With no mailer present, pulselog warns once to stderr and the JSONL line remains the
 record.
+
+> **On a host with no MTA, a failed backup is exactly: history line written → exit 1
+> → no email** (just the one-line stderr warning) — `sendEmail` never throws, and the
+> failure still rethrows so the CLI exits 1. So size your **dead-man's-switch** on the
+> archive, not the email. The blessed pattern is a health `file-age` check (on a
+> reachable host) pointed at the backup `dir` with `maxAgeHours` **> the backup
+> interval**: a failed run publishes no new archive, so freshness lapses and *that*
+> watcher alerts. (Same pattern replaces a success-ping/heartbeat without pulselog ever
+> phoning home.) Or just gate on the exit code in your scheduler.
 
 ## Exit codes
 
@@ -332,6 +413,18 @@ return and what goes in `alert.app` / context.
   run refuses to start, so a backup `dir` can never accumulate unbounded silently. A
   too-small archive (`minBytes`) fails the run — it is neither published nor rotated,
   so a truncated dump can't evict a good prior archive.
+- **`minBytes` floors the *whole archive*, not each source (backup).** It catches a
+  truncated/empty tar, but a large source can mask an empty critical one (a fat
+  `certs/` payload hides an empty `repos.tar.gz`). For a per-source invariant, **assert
+  it inside your `command`** (`exit 1` if the crown-jewel file is missing/empty) — that
+  fails loud → no publish, no rotation, exit 1. `minBytes` stays a coarse truncation
+  floor by design; pulselog doesn't grow per-source size rules.
+- **`include`/`command` copies are not point-in-time snapshots (backup).** `include`
+  is a plain recursive copy (symlinks preserved); a dir written *during* the copy
+  (e.g. a live-written git repo) can land mid-write — the same consistency risk as any
+  `tar`-over-a-live-tree, no worse. For a consistent capture, quiesce the writer or
+  dump through a `command` that snapshots first. (The curated `db` engines *do* take a
+  consistent dump — that's their whole value.)
 
 ## What pulselog will not do (the refusals *are* the product)
 

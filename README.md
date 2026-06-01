@@ -85,7 +85,7 @@ App-specific probes (mail-queue depth, `pg_isready`, a bespoke script) go throug
 }
 ```
 
-`--dry-run` renders the table to stdout without writing or emailing. See `config.example.json` and the [integration guide](pulselog.context.md) for every option (`skipIfFlat`, flightlog enrichment, `weeks`).
+`--dry-run` renders the table to stdout without writing or emailing. Got one command that computes many numbers in a single pass? Declare `metricsCommand` (a command that prints a flat JSON object of named integers) and let each metric pick its value by name — one spawn, not one per metric. See `config.example.json` and the [integration guide](pulselog.context.md) for every option (`metricsCommand`, `skipIfFlat`, flightlog enrichment, `weeks`).
 
 **Backup** — stage three kinds of source into a fresh `$PULSELOG_STAGE`, then tar atomically, floor, and rotate. At least one source is required:
 
@@ -131,7 +131,7 @@ jq -s 'sort_by(.ts)' errors.jsonl health.jsonl stats.jsonl backup.jsonl
 
 JSONL files are created `0600` (owner-only) so data isn't world-readable on a shared host. **Exit codes:** `0` when a run completed (failures are emailed + logged — the alert is the signal, so cron stays quiet); `1` only when the run itself couldn't proceed (missing/invalid config), so a misconfiguration surfaces loudly.
 
-18 tests pass on CI (Node 22) — health checks (live local HTTP server, tmp files) and digest (metric parse, ISO-week WoW, the flightlog 7-day rollup, render, and a **mutation-tested privacy invariant**: an error's message/stack must never reach the history line or the email). Ships TypeScript types generated from JSDoc — `import { run, runDigest } from "pulselog"` gives autocomplete out of the box.
+39 tests pass on CI (Node 22) — health checks (live local HTTP server, tmp files), digest (metric parse, batch `metricsCommand`, ISO-week WoW, the flightlog 7-day rollup, render, and a **mutation-tested privacy invariant**: an error's message/stack must never reach the history line or the email), and backup (staging, atomic publish, retention, and the security regressions). Ships TypeScript types generated from JSDoc — `import { run, runDigest } from "pulselog"` gives autocomplete out of the box.
 
 ## Docs
 

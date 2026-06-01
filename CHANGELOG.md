@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-01
+
+A batch metric source for the digest, plus documentation hardening from the first
+adopter (gitdone) mapping its watchers onto pulselog. Still zero production
+dependencies (`node:*` + global `fetch`); backward compatible.
+
+### Added
+- **Digest `metricsCommand`** — an optional batch metric source: one command that
+  prints a **flat JSON object of named integers**, from which each `metrics[]` entry
+  *without* its own `command` takes its value by `name`. Amortizes an expensive
+  snapshot (e.g. ~14 numbers from one scan instead of one spawn per metric) while
+  keeping every invariant: only declared names reach the snapshot, each value passes
+  the same whole-number gate (float/bool/string/missing → `null`, never sinks the run),
+  and a metric *with* its own `command` still runs and overrides the batch. Backward
+  compatible — `command` is now optional on a metric only when `metricsCommand` is set.
+
+### Documented
+- Digest **cadence is decoupled from the table** — history groups by ISO week (latest
+  snapshot per week), so `--digest` can run daily for finer history + proof-of-life
+  while the WoW table stays weekly.
+- `alert.logTail` **includes raw log lines** (messages/stacks) in the alert email by
+  design — the opposite stance from the digest's counts-and-names-only rollup.
+- `service` is `is-active` semantics (long-running/armed-timer units); **oneshot**
+  success goes through `command` (`! systemctl is-failed …`).
+- Backup: a `command` is a **first-class sole source**; write by absolute
+  `$PULSELOG_STAGE` (cwd is not the stage); a non-zero exit aborts (no publish/rotate,
+  exit 1). `minBytes` is a **whole-archive** floor — assert per-source integrity inside
+  your `command`. `include` copies are **not** point-in-time snapshots. With no MTA, a
+  failed backup is log-line + exit 1 + no email — size a `file-age` dead-man's-switch
+  on the archive accordingly.
+
 ## [0.2.0] - 2026-05-31
 
 A third mode — **backups** (see the PRD in `docs/01-product`). Published to npm via
@@ -88,7 +119,8 @@ publishing (signed provenance, no token). Zero production dependencies
   throws on import, directing users to the repo. Reserves `pulselog` while `0.1.0`
   is built.
 
-[Unreleased]: https://github.com/hamr0/pulselog/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/hamr0/pulselog/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/hamr0/pulselog/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/hamr0/pulselog/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/hamr0/pulselog/compare/v0.0.1...v0.1.0
 [0.0.1]: https://github.com/hamr0/pulselog/releases/tag/v0.0.1
