@@ -7,13 +7,13 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import {
   mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, statSync,
-  rmSync, existsSync, symlinkSync, lstatSync, utimesSync,
+  rmSync, existsSync, symlinkSync, lstatSync, utimesSync, chmodSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runBackup } from '../src/backup.js';
-import { pgDumpArgs, mysqlDumpArgs, dbDest } from '../src/dumpers.js';
+import { pgDumpArgs, mysqlDumpArgs, dbDest, dumpDb } from '../src/dumpers.js';
 
 const BIN = fileURLToPath(new URL('../bin/pulselog.js', import.meta.url));
 
@@ -185,6 +185,48 @@ test('dumpers[sec]: pg_dump strips an embedded URL password from argv (no proces
   const a = pgDumpArgs({ url: 'postgres://u:s3cret@h:5432/db', dest: '/s/d.dump' });
   assert.ok(!a.some((x) => /s3cret/.test(x)), 'password must never appear in argv');
   assert.ok(a.some((x) => x.includes('postgres://u@h:5432/db')), 'connection still passed, password removed');
+});
+
+// L5: the password goes ONLY to the var the engine's tool reads — a postgres dump's
+// child env must not also carry MYSQL_PWD (and vice-versa).
+test('dumpers[sec]: password reaches only the engine\'s own env var', async (t) => {
+  const dir = tmp(t);
+  const bin = join(dir, 'bin'); mkdirSync(bin);
+  const envOut = join(dir, 'env.out');
+  // fake pg_dump (argv: -Fc -f <dest> <conn>) records the password vars + makes the dest
+  writeFileSync(join(bin, 'pg_dump'), `#!/bin/sh\nenv | grep -E '^(PGPASSWORD|MYSQL_PWD)=' | sort > ${envOut}\n: > "$3"\n`);
+  chmodSync(join(bin, 'pg_dump'), 0o755);
+  const orig = process.env.PATH;
+  process.env.PATH = `${bin}:${orig}`;
+  t.after(() => { process.env.PATH = orig; });
+
+  await dumpDb({ engine: 'postgres', url: 'postgres://u:s3cret@h/db' }, join(dir, 'o.dump'));
+  const seen = readFileSync(envOut, 'utf8');
+  assert.match(seen, /PGPASSWORD=s3cret/, 'postgres dump gets PGPASSWORD');
+  assert.doesNotMatch(seen, /MYSQL_PWD/, 'postgres dump must NOT also carry MYSQL_PWD');
+});
+
+// L1: a pre-existing loose backup dir is tightened to 0700 (mkdir's mode is ignored on
+// an existing dir), and the umask tightening keeps the archive owner-only with no window.
+test('backup[sec]: a pre-existing 0755 dir is tightened to 0700; archive stays 0600', async (t) => {
+  const dir = tmp(t);
+  const out = join(dir, 'out');
+  mkdirSync(out); chmodSync(out, 0o755);
+  const cfg = writeConfig(dir, { dir: out, name: 'b', keepLast: 1, command: 'sh', args: ['-c', 'echo hi > "$PULSELOG_STAGE/x"'] });
+  const r = await runBackup({ configPath: cfg });
+  assert.equal(statSync(out).mode & 0o777, 0o700, 'pre-existing loose dir tightened to 0700');
+  assert.equal(statSync(r.archive).mode & 0o777, 0o600, 'archive owner-only');
+});
+
+// L3: a db `name` / backup `name` becomes a filename joined into the stage/dir — reject
+// path separators and ".." so a typo (or crafted name) can't escape.
+test('backup[sec]: rejects a db name or backup name with path separators / ".."', async (t) => {
+  assert.throws(() => dbDest({ engine: 'sqlite', name: '../escape' }, 0), /must not contain/);
+  assert.throws(() => dbDest({ engine: 'sqlite', name: 'a/b' }, 0), /must not contain/);
+  assert.equal(dbDest({ engine: 'sqlite', name: 'app' }, 0), 'app.db', 'a normal name still works');
+  const dir = tmp(t);
+  const cfg = writeConfig(dir, { dir: join(dir, 'out'), name: '../evil', keepLast: 1, command: 'true' });
+  await assert.rejects(runBackup({ configPath: cfg }), /backup name .* must not contain/);
 });
 
 // ── validation ───────────────────────────────────────────────────────────────

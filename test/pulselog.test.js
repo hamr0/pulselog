@@ -3,10 +3,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, chmodSync, utimesSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { http, fileAge, disk } from '../src/checks.js';
+import { fileURLToPath } from 'node:url';
+import { http, fileAge, disk, service } from '../src/checks.js';
 import { assembleEmail, sendEmail } from '../src/email.js';
 import { run } from '../src/run.js';
 
@@ -28,6 +30,26 @@ function tmp(t) {
   const dir = mkdtempSync(join(tmpdir(), 'pulselog-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   return dir;
+}
+
+/** Prepend `dir` to PATH for the duration of the test (to shadow a real binary). */
+function shadowPath(t, dir) {
+  const orig = process.env.PATH;
+  process.env.PATH = `${dir}:${orig}`;
+  t.after(() => { process.env.PATH = orig; });
+}
+
+/**
+ * Write an executable script that exits 0 only once its own call-counter reaches
+ * `succeedOn` — a deterministic flaky check for exercising in-run retry.
+ */
+function flakyScript(dir, name, succeedOn) {
+  const counter = join(dir, `${name}.count`);
+  const path = join(dir, name);
+  writeFileSync(path,
+    `#!/bin/sh\nf="${counter}"\nn=$(cat "$f" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$f"\n[ "$n" -ge ${succeedOn} ]\n`);
+  chmodSync(path, 0o755);
+  return path;
 }
 
 test('http: 200 is ok, non-expected status fails', async () => {
@@ -127,6 +149,141 @@ test('sendEmail[sec]: a newline in a header field cannot inject a mail header', 
   const got = readFileSync(rec, 'utf8');
   assert.doesNotMatch(got, /\n/, 'no newline reaches the header fields');
   assert.match(got, /Bcc: attacker@evil\.test/, 'the injection attempt is flattened into the subject text, not a header');
+});
+
+// ── (M1) CLI refuses a config others can write — it executes commands as us ──────
+test('CLI[sec]: refuses a group/world-writable config; runs a 0600 one', (t) => {
+  const dir = tmp(t);
+  const cfg = join(dir, 'cfg.json');
+  writeFileSync(cfg, JSON.stringify({ checks: [] }));
+  const BIN = fileURLToPath(new URL('../bin/pulselog.js', import.meta.url));
+
+  chmodSync(cfg, 0o666);
+  const bad = spawnSync(process.execPath, [BIN, '--config', cfg], { encoding: 'utf8' });
+  assert.equal(bad.status, 1, 'a world-writable config is refused');
+  assert.match(bad.stderr, /group\/world-writable/);
+
+  chmodSync(cfg, 0o600);
+  const ok = spawnSync(process.execPath, [BIN, '--config', cfg], { encoding: 'utf8' });
+  assert.equal(ok.status, 0, 'a 0600 config runs');
+});
+
+// ── (a) per-check timeoutMs on service/disk + a labeled timeout ──────────────────
+// service and disk used to hardcode 5000ms and never label a kill as a timeout. Both
+// now read `timeoutMs` and say "timeout after Ns". A fake binary that sleeps far past
+// the timeout proves the knob is honored (fast return) AND the label is correct.
+test('disk: honors timeoutMs and labels a timeout', async (t) => {
+  const dir = tmp(t);
+  writeFileSync(join(dir, 'df'), '#!/bin/sh\nsleep 10\n');
+  chmodSync(join(dir, 'df'), 0o755);
+  shadowPath(t, dir);
+  const start = Date.now();
+  const r = await disk({ path: '/', timeoutMs: 300 });
+  const elapsed = Date.now() - start;
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /timeout/);
+  assert.ok(elapsed < 3000, `should honor the 300ms timeout, took ${elapsed}ms`);
+});
+
+test('service: honors timeoutMs and labels a timeout', async (t) => {
+  const dir = tmp(t);
+  writeFileSync(join(dir, 'systemctl'), '#!/bin/sh\nsleep 10\n');
+  chmodSync(join(dir, 'systemctl'), 0o755);
+  shadowPath(t, dir);
+  const start = Date.now();
+  const r = await service({ unit: 'whatever.service', timeoutMs: 300 });
+  const elapsed = Date.now() - start;
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /timeout/);
+  assert.ok(elapsed < 3000, `should honor the 300ms timeout, took ${elapsed}ms`);
+});
+
+// ── (b) in-run retry: a transient failure is re-probed before it pages ───────────
+test('run: retries a flaky check and records green when it recovers', async (t) => {
+  const dir = tmp(t);
+  const out = join(dir, 'health.jsonl');
+  const script = flakyScript(dir, 'flaky', 2); // fails attempt 1, passes attempt 2
+  const cfgPath = join(dir, 'cfg.json');
+  writeFileSync(cfgPath, JSON.stringify({
+    output: { file: out, maxBytes: 0 },
+    checks: [{ type: 'command', name: 'flaky', command: script, retries: 2, retryDelayMs: 0 }],
+  }));
+  const res = await run({ configPath: cfgPath });
+  assert.deepEqual(res, { total: 1, failures: 0 }, 'recovered on retry → no failure');
+  assert.equal(existsSync(out), false, 'silent on green');
+});
+
+test('run: a check failing every attempt is recorded ONCE, noting the attempts', async (t) => {
+  const dir = tmp(t);
+  const out = join(dir, 'health.jsonl');
+  const script = flakyScript(dir, 'down', 99); // never succeeds within the attempts
+  const cfgPath = join(dir, 'cfg.json');
+  writeFileSync(cfgPath, JSON.stringify({
+    output: { file: out, maxBytes: 0 },
+    checks: [{ type: 'command', name: 'down', command: script, retries: 1, retryDelayMs: 0 }],
+  }));
+  const res = await run({ configPath: cfgPath });
+  assert.deepEqual(res, { total: 1, failures: 1 });
+  const recs = readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.equal(recs.length, 1, 'one failure line despite retries — not one per attempt');
+  assert.match(recs[0].message, /after 2 attempts/);
+});
+
+test('run: default is no retry (one attempt, no annotation)', async (t) => {
+  const dir = tmp(t);
+  const out = join(dir, 'health.jsonl');
+  const script = flakyScript(dir, 'once', 2); // WOULD pass on attempt 2, but no retry
+  const cfgPath = join(dir, 'cfg.json');
+  writeFileSync(cfgPath, JSON.stringify({
+    output: { file: out, maxBytes: 0 },
+    checks: [{ type: 'command', name: 'once', command: script }],
+  }));
+  const res = await run({ configPath: cfgPath });
+  assert.deepEqual(res, { total: 1, failures: 1 }, 'no retry by default → fails on first attempt');
+  const recs = readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.doesNotMatch(recs[0].message, /attempts/, 'no retry annotation when retries=0');
+});
+
+test('run: a non-integer/negative retries is coerced (no loop-bound warp or crash)', async (t) => {
+  const dir = tmp(t);
+  const out = join(dir, 'health.jsonl');
+  const script = flakyScript(dir, 'str', 99); // never recovers within a sane attempt count
+  const cfgPath = join(dir, 'cfg.json');
+  // retries as a STRING would make `retries + 1` evaluate to "21" (21 attempts) if used
+  // raw; coercion clamps it to the integer 2 → exactly 3 attempts.
+  writeFileSync(cfgPath, JSON.stringify({
+    output: { file: out, maxBytes: 0 },
+    checks: [{ type: 'command', name: 'str', command: script, retries: '2', retryDelayMs: 0 }],
+  }));
+  const res = await run({ configPath: cfgPath });
+  assert.deepEqual(res, { total: 1, failures: 1 });
+  assert.match(JSON.parse(readFileSync(out, 'utf8').trim()).message, /after 3 attempts/,
+    'string "2" → 2 retries → 3 attempts, not 21');
+
+  // a negative value must not crash the run (clamps to 0 → one attempt, no annotation)
+  const out2 = join(dir, 'h2.jsonl');
+  const cfg2 = join(dir, 'c2.json');
+  writeFileSync(cfg2, JSON.stringify({
+    output: { file: out2, maxBytes: 0 },
+    checks: [{ type: 'command', name: 'neg', command: flakyScript(dir, 'neg', 99), retries: -5 }],
+  }));
+  const res2 = await run({ configPath: cfg2 });
+  assert.deepEqual(res2, { total: 1, failures: 1 }, 'negative retries does not crash the run');
+  assert.doesNotMatch(JSON.parse(readFileSync(out2, 'utf8').trim()).message, /attempts/);
+});
+
+test('run: config.retry default applies when a check omits its own', async (t) => {
+  const dir = tmp(t);
+  const out = join(dir, 'health.jsonl');
+  const script = flakyScript(dir, 'g', 2);
+  const cfgPath = join(dir, 'cfg.json');
+  writeFileSync(cfgPath, JSON.stringify({
+    output: { file: out, maxBytes: 0 },
+    retry: { retries: 2, retryDelayMs: 0 },
+    checks: [{ type: 'command', name: 'g', command: script }],
+  }));
+  const res = await run({ configPath: cfgPath });
+  assert.deepEqual(res, { total: 1, failures: 0 }, 'global retry default recovers the flaky check');
 });
 
 test('run: silent on green (no file written), records each failure on red', async (t) => {

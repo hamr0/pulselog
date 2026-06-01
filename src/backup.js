@@ -66,6 +66,8 @@ export async function runBackup({ configPath, now = Date.now() }) {
   const b = config.backup;
   if (!b) throw new Error('config has no "backup" block');
   if (!b.dir || !b.name) throw new Error('backup needs "dir" and "name"');
+  // `name` becomes the archive filename joined into `dir` — keep it from escaping.
+  if (/[/\\]|\.\./.test(b.name)) throw new Error(`backup name "${b.name}" must not contain "/", "\\", or ".."`);
   const dbs = b.db ? (Array.isArray(b.db) ? b.db : [b.db]) : [];
   const includes = (b.include || []).map((e) => (typeof e === 'string' ? { path: e } : e));
   if (!dbs.length && !includes.length && !b.command) {
@@ -86,10 +88,22 @@ export async function runBackup({ configPath, now = Date.now() }) {
     used.add(n);
   };
 
-  mkdirSync(b.dir, { recursive: true, mode: 0o700 }); // new dir owner-only (no-op if it already exists)
-  const stage = mkdtempSync(join(b.dir, '.stage-')); // stage IN dir (a tmpfs /tmp can OOM on a big dump); mkdtemp is 0700
+  // The archive holds DB dumps + private keys (TLS/DKIM). Tighten the umask so the
+  // `tar` temp file is born owner-only (no 0644 window before the chmod below), and
+  // enforce 0700 on `dir` even if it PRE-EXISTED with looser perms (mkdir's `mode` is
+  // ignored on an existing dir, so a pre-made 0755 dir would otherwise leak listings).
+  const prevUmask = process.umask(0o077);
+  /** @type {string | undefined} */
+  let stage;
 
   try {
+    // Create dir + stage INSIDE the try so a failure here is recorded/alerted like any
+    // other (D15) and the finally always restores the umask. mkdir's `mode` is ignored
+    // on an existing dir, so chmod enforces 0700 even on a pre-made looser dir.
+    mkdirSync(b.dir, { recursive: true, mode: 0o700 });
+    chmodSync(b.dir, 0o700);
+    stage = mkdtempSync(join(b.dir, '.stage-')); // stage IN dir (a tmpfs /tmp can OOM on a big dump); mkdtemp is 0700
+
     // 1. built-in db dumps (safe defaults) → the stage
     for (let i = 0; i < dbs.length; i++) {
       const d = dbs[i];
@@ -149,6 +163,7 @@ export async function runBackup({ configPath, now = Date.now() }) {
     if (b.email) { try { sendEmail({ to: b.email, from: b.from, subject: `[${app}] backup FAILED — ${b.name}`, body: `${err.message}\n` }); } catch { /* same */ } }
     throw err;
   } finally {
-    rmSync(stage, { recursive: true, force: true });
+    if (stage) rmSync(stage, { recursive: true, force: true });
+    process.umask(prevUmask); // restore — don't leave a tightened umask on a long-lived host
   }
 }

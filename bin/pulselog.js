@@ -8,6 +8,7 @@
 // — the email + the JSONL line are the signal, not the exit code, so cron stays quiet
 // on a health failure or a flat week. Exit 1 only when the run itself couldn't proceed
 // (bad/missing config, unreadable file), so a misconfiguration surfaces loudly.
+import { statSync } from 'node:fs';
 import { run } from '../src/run.js';
 import { runDigest } from '../src/digest.js';
 import { runBackup } from '../src/backup.js';
@@ -35,6 +36,23 @@ for (let i = 0; i < argv.length; i++) {
         'See README and config.example.json.\n',
     );
     process.exit(0);
+  }
+}
+
+// The config drives command execution as THIS user — often root for backups that read
+// /etc/letsencrypt or /etc/opendkim. A config someone else can write (or owns) is then
+// code execution as us, so refuse it (like ssh/sudo refuse an attacker-writable config).
+// Missing/unreadable → leave it to the loader below to report the canonical error.
+let cfgStat = null;
+try { cfgStat = statSync(configPath); } catch { /* loader will fail loud */ }
+if (cfgStat) {
+  if (cfgStat.mode & 0o022) {
+    process.stderr.write(`pulselog: refusing ${configPath}: group/world-writable (chmod go-w it)\n`);
+    process.exit(1);
+  }
+  if (process.getuid && cfgStat.uid !== process.getuid()) {
+    process.stderr.write(`pulselog: refusing ${configPath}: not owned by the running user (chown it)\n`);
+    process.exit(1);
   }
 }
 

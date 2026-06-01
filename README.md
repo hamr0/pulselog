@@ -62,14 +62,16 @@ Write a config (copy `config.example.json`), then run each mode on its own sched
 | `http` | endpoint returns the expected status | `url`, `expectStatus` (200), `timeoutMs` (5000) |
 | `tcp` | host:port accepts a connection (DB/queue reachability) | `host`, `port`, `timeoutMs` (5000) |
 | `ssl` | TLS cert is not near expiry | `host`, `port` (443), `warnDays` (14) |
-| `disk` | path is below a usage threshold | `path`, `maxPercent` (85) |
+| `disk` | path is below a usage threshold | `path`, `maxPercent` (85), `timeoutMs` (5000) |
 | `file-age` | newest file in a dir is fresh (backups ran) | `path`, `maxAgeHours`, `pattern`, `recursive` |
-| `service` | a systemd unit is `active` | `unit` |
+| `service` | a systemd unit is `active` | `unit`, `timeoutMs` (5000) |
 | `command` | any command exits `0` — the escape hatch | `command`, `args`, `timeoutMs` (10000) |
 
 App-specific probes (mail-queue depth, `pg_isready`, a bespoke script) go through `command` — run **without a shell** (`command` + `args` array); for a pipe, use `"command": "sh", "args": ["-c", "…"]`.
 
 `file-age` scans one directory by default; set `"recursive": true` for date-stamped backup layouts (`daily/<date>/app.db`) so it finds the newest match anywhere below `path`.
+
+Every check takes a `timeoutMs`, and a noisy host won't page on a single blip: set `retries` (default 0) + `retryDelayMs` (default 1000) per check, or a top-level `retry` block as the default each check can override — a check that recovers on a retry stays green; one that fails every attempt is recorded once. (Retry is per-run only; "page after N consecutive runs" is alert policy for your JSONL consumer, not pulselog.)
 
 **Digest metrics** — each is a name and a command that prints **one integer**; that integer is *all* pulselog stores. Anything else records `null` for that metric (noted, never fatal):
 

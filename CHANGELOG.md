@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-01
+
+Reliability + hardening from the first-adopter (gitdone) pass: a per-check timeout knob
+and in-run retry so a transient blip on a shared host doesn't page, plus a security
+audit that closed four local-attack/footgun gaps. New config is opt-in — defaults
+preserve prior behavior. Still zero production dependencies.
+
+### Security
+- **CLI refuses a config others can write.** The config drives command execution as the
+  running user (often root for backups), so `bin/pulselog.js` now rejects a config that
+  is group/world-writable or not owned by the running user — closing a local
+  code-execution-as-root path on a misconfigured deployment (precedent: `ssh`/`sudo`).
+- **Backup tightens a pre-existing dir + no temp-archive perms window.** `runBackup`
+  sets `umask 0077` for the run (the `tar` temp file is born `0600`, no brief `0644`
+  window) and `chmod 0700`s the backup dir even when it pre-existed with looser perms
+  (`mkdir`'s `mode` is ignored on an existing dir). Restores the prior umask after.
+- **DB password reaches only its engine's env var.** A `postgres` dump no longer also
+  carries `MYSQL_PWD` in its child env (and vice-versa) — smaller secret footprint.
+- **Backup/db `name` can't escape the stage.** A `name`/`db[].name` containing `/`, `\`,
+  or `..` is rejected loudly instead of writing the dump/archive outside the target dir.
+
+### Added
+- **Per-check `timeoutMs` on every check** — `service` and `disk` were hardcoded to
+  5000 ms; both now read `timeoutMs` (default 5000, unchanged) like `http`/`tcp`/`ssl`/
+  `command`. A killed probe is now labeled `timeout after Ns` (previously `service`
+  surfaced a bare `unknown`).
+- **In-run retry** — optional `retries` (default `0`) + `retryDelayMs` (default `1000`),
+  per-check or via a top-level `retry` default each check can override. A failing check
+  is re-probed within the same run before it's recorded; one that recovers is green, one
+  that fails every attempt is recorded **once** with `(after N attempts)`. Stateless —
+  no cross-run failure memory. Defaults preserve current behavior exactly (one attempt).
+
+### Not doing
+- **Cross-run consecutive-failure debounce** ("page after N runs fail") — declined: it
+  requires persistent health state pulselog doesn't keep and is alert dedup, which stays
+  in the JSONL-consuming layer. In-run `retries` cover the transient-blip case.
+
 ## [0.3.1] - 2026-06-01
 
 Documentation + packaging only — no API or behavior change. Transport and off-host
@@ -144,7 +181,8 @@ publishing (signed provenance, no token). Zero production dependencies
   throws on import, directing users to the repo. Reserves `pulselog` while `0.1.0`
   is built.
 
-[Unreleased]: https://github.com/hamr0/pulselog/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/hamr0/pulselog/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/hamr0/pulselog/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/hamr0/pulselog/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/hamr0/pulselog/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/hamr0/pulselog/compare/v0.1.0...v0.2.0

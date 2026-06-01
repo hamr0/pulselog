@@ -21,10 +21,10 @@ Every signal is **one JSON line** in flightlog's core dialect (`ts`, `kind`, …
 This file is the complete contract: every option, all three modes, what pulselog
 deliberately does **not** do, the privacy model, and the gotchas.
 
-> **Status:** `0.3.1` is published — all three modes (health + digest + **`backup`**)
-> are on npm; the digest has a batch `metricsCommand` source. `0.3.1` adds
-> transport-deliverability + off-host-pull doc hardening and ships `examples/` (docs +
-> packaging only, no API change).
+> **Status:** `0.4.0` is published — all three modes (health + digest + **`backup`**)
+> are on npm. `0.4.0` adds a per-check `timeoutMs` and opt-in in-run `retries`, and lands
+> a security pass (config-perms gate, backup dir/umask tightening, per-engine password
+> env, name-escape guards). Defaults are unchanged.
 
 ## What pulselog is and is NOT
 
@@ -93,9 +93,9 @@ pulselog --digest --dry-run --config …              # render the digest, don't
 | `http` | endpoint returns the expected **status code** | `url`, `expectStatus` (200), `timeoutMs` (5000) |
 | `tcp` | host:port accepts a connection | `host`, `port`, `timeoutMs` (5000) |
 | `ssl` | TLS cert is not near expiry | `host`, `port` (443), `warnDays` (14) |
-| `disk` | path is below a usage threshold | `path`, `maxPercent` (85) |
+| `disk` | path is below a usage threshold | `path`, `maxPercent` (85), `timeoutMs` (5000) |
 | `file-age` | newest file in a dir is fresh (backups ran) | `path`, `maxAgeHours`, `pattern`, `recursive` (false — set true for date-stamped `daily/<date>/` layouts) |
-| `service` | a systemd unit is `active` | `unit` |
+| `service` | a systemd unit is `active` | `unit`, `timeoutMs` (5000) |
 | `command` | any command exits `0` — the escape hatch | `command`, `args`, `timeoutMs` (10000) |
 
 > `http` checks the **status code only** — by design. App-specific body assertions
@@ -113,6 +113,36 @@ pulselog --digest --dry-run --config …              # render the digest, don't
 > dead-after-success. Add `systemctl show -p Result,ActiveExitTimestamp` if you also
 > want last-run recency. pulselog core stays `is-active`; oneshot semantics live in
 > your `command`.
+
+### Retry — don't page on a transient blip
+
+A single timed-out probe on a loaded or shared host shouldn't alert. Set `retries`
+(default `0`) and `retryDelayMs` (default `1000`) to re-probe a **failing** check in the
+same run before it's recorded — per-check, or globally via a top-level `retry` block
+that each check can override:
+
+```jsonc
+{
+  "retry": { "retries": 2, "retryDelayMs": 2000 },   // default for every check
+  "checks": [
+    { "type": "http", "name": "api", "url": "…" },                         // inherits 2×/2s
+    { "type": "service", "name": "worker", "unit": "worker.service",
+      "retries": 0 },                                                       // opt OUT for this one
+    { "type": "tcp", "name": "db", "host": "…", "port": 5432,
+      "retries": 4, "retryDelayMs": 500 }                                   // tune per service
+  ]
+}
+```
+
+- A check that **recovers** on a retry is treated as green (no line, no email). One that
+  fails **every** attempt is recorded **once** (never one line per attempt), its reason
+  noting `(after N attempts)`.
+- **Stateless on purpose.** Retry decides whether a probe is *really* failing **within
+  one run** — it never remembers failures across runs. "Page only after N consecutive
+  *runs* fail" is alert **policy** and stays in the layer that consumes the JSONL (see
+  the refusals); pulselog keeps no cross-run health state.
+- Pair with per-check `timeoutMs` (now on every check incl. `service`/`disk`): loosen the
+  timeout where a probe is legitimately slow, retry where it's flaky — different knobs.
 
 On a failure it appends one JSONL line **per failing check** and sends **one**
 summary email. Silent on success.
@@ -495,7 +525,11 @@ return and what goes in `alert.app` / context.
   never log lines.
 - **No metrics DB / dashboard / charts / UI** — it appends JSONL and renders text.
 - **No alerting platform** — one email per run; no routing, escalation, paging, or
-  dedup beyond "send once" / "skip if flat".
+  dedup beyond "send once" / "skip if flat". In-run `retries` cushion a transient blip,
+  but **cross-run failure-count debounce** ("page only after N consecutive runs fail")
+  is deliberately **out**: it needs persistent health state pulselog doesn't keep, and
+  it's alert dedup — that threshold lives in the layer consuming the JSONL (an
+  Alertmanager-style rule, a systemd `OnFailure=`, your own reader).
 - **No transport / upload** — never phones home.
 - **No HTTP body assertion** — `http` is status-code only; use `command` for the rest.
 - **Not flightlog** — it observes from outside; flightlog captures from inside.

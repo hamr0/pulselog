@@ -25,6 +25,9 @@ import { spawnSync } from 'node:child_process';
  */
 export function dbDest(entry, i) {
   const label = entry.name || `${entry.engine}-${i + 1}`;
+  // The label becomes a filename joined into the stage — reject path separators / ".."
+  // so a config typo (or a crafted name) can't escape the stage dir.
+  if (/[/\\]|\.\./.test(label)) throw new Error(`db name "${label}" must not contain "/", "\\", or ".."`);
   // Explicit per engine — never a catch-all `.sql`, so an unknown engine fails
   // loud here (the earliest point) instead of being mislabeled, mirroring dumpDb.
   const ext = entry.engine === 'sqlite' ? 'db'
@@ -111,9 +114,11 @@ export async function dumpDb(entry, dest) {
   if (!pw && (entry.engine === 'postgres' || entry.engine === 'mysql') && entry.url) {
     try { const u = new URL(entry.url); if (u.password) pw = decodeURIComponent(u.password); } catch { /* not a URL */ }
   }
+  // Hand the password ONLY to the var the engine's tool reads — don't also expose it
+  // in the other (a postgres dump has no business carrying MYSQL_PWD in its child env).
   if (pw) {
-    env.PGPASSWORD = pw; // pg_dump
-    env.MYSQL_PWD = pw; // mysqldump
+    if (entry.engine === 'postgres') env.PGPASSWORD = pw;
+    else if (entry.engine === 'mysql') env.MYSQL_PWD = pw;
   }
   switch (entry.engine) {
     case 'sqlite': {

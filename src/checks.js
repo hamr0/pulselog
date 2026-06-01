@@ -89,9 +89,9 @@ export function ssl(cfg) {
 
 /** A filesystem path is below a usage threshold (parsed from `df -Pk`). */
 export async function disk(cfg) {
-  const { path = '/', maxPercent = 85 } = cfg;
-  const { code, stdout } = await exec('df', ['-Pk', path], 5000);
-  if (code !== 0) return { ok: false, reason: `df failed for ${path}` };
+  const { path = '/', maxPercent = 85, timeoutMs = 5000 } = cfg;
+  const { code, stdout, killed } = await exec('df', ['-Pk', path], timeoutMs);
+  if (code !== 0) return { ok: false, reason: killed ? `df timeout after ${secs(timeoutMs)}s for ${path}` : `df failed for ${path}` };
   const last = stdout.trim().split('\n').pop() || '';
   const pct = Number((last.match(/(\d+)%/) || [])[1]);
   if (Number.isNaN(pct)) return { ok: false, reason: `could not parse df for ${path}` };
@@ -159,13 +159,20 @@ export async function fileAge(cfg) {
   }
 }
 
-/** A systemd unit is active (`systemctl is-active`). */
+/**
+ * A systemd unit is active (`systemctl is-active`). Note: `is-active` is for
+ * long-running units and armed timers — a healthy `oneshot` finishes `inactive`, so
+ * check oneshot success via a `command` (`! systemctl is-failed …`), not here.
+ */
 export async function service(cfg) {
-  const { unit } = cfg;
-  const { code, stdout } = await exec('systemctl', ['is-active', unit], 5000);
+  const { unit, timeoutMs = 5000 } = cfg;
+  const { code, stdout, killed } = await exec('systemctl', ['is-active', unit], timeoutMs);
   const state = stdout.trim() || 'unknown';
   const ok = code === 0 && state === 'active';
-  return { ok, reason: ok ? `${unit} active` : `${unit} ${state}`, detail: { state } };
+  const reason = ok ? `${unit} active`
+    : killed ? `${unit} timeout after ${secs(timeoutMs)}s`
+    : `${unit} ${state}`;
+  return { ok, reason, detail: { state } };
 }
 
 /** Escape hatch: any command that exits 0 is healthy. */
