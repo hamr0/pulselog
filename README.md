@@ -143,6 +143,22 @@ JSONL files are created `0600` (owner-only) so data isn't world-readable on a sh
 | **[PRD](docs/01-product/2026-05-31-prd.md)** | Locked decisions + *why*, success criteria, the refusals, build order. *(repo-only)* |
 | **[CHANGELOG](CHANGELOG.md)** | keep-a-changelog; an entry every release. |
 
+## flightlog + pulselog — a lightweight server-log suite
+
+Two halves of one observability story for apps you run yourself: a **zero-dep,
+self-hosted alternative to Sentry and hosted analytics/uptime monitoring**. Same
+JSONL dialect, so one `tail` / `jq` / uploader spans both. Embed [flightlog](https://github.com/hamr0/flightlog)
+*inside* the app; schedule pulselog *outside* it.
+
+| | [flightlog](https://github.com/hamr0/flightlog) | [pulselog](https://github.com/hamr0/pulselog) |
+|---|---|---|
+| **Vantage** | inside the app (in-process) | outside, scheduled watcher |
+| **Answers** | what broke | is it up · how it's trending · is it safe |
+| **Captures** | uncaught errors, rejections, `capture()` | health · weekly stats · rotated backups |
+| **Runs** | embedded, fires on every error | cron — health 5m · digest weekly · backup nightly |
+| **Output** | one JSONL line per error | one JSONL line per result (same dialect) |
+| **Replaces** | Sentry, Rollbar, Bugsnag | hosted analytics, Pingdom, UptimeRobot |
+
 ## License
 
 Apache 2.0. See [LICENSE](LICENSE).

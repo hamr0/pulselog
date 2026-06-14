@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- **README — added a "flightlog + pulselog" pairing table** near the end, framing the two as a lightweight, self-hosted server-log suite (in-process error capture vs. external scheduled watcher) over the same JSONL dialect — the zero-dep alternative to Sentry and hosted analytics/uptime monitoring. The same table ships in both repos. README only; no package change.
+
 ## [0.4.1] - 2026-06-01
 
 A one-line refinement to the `0.4.0` config-ownership gate so it matches the `ssh`
