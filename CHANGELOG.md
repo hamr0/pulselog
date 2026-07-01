@@ -5,6 +5,22 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-07-01
+
+An observable-label fix to the `command` check's timeout reason. No config change,
+no API change, still zero production dependencies.
+
+### Changed
+- **`command` check now labels a timeout kill `timeout after Ns`, not `exit 1 (timeout)`.**
+  A kill by timeout gives `execFile` an `err.code` of `null`, which the runner
+  synthesises to `1` — so the old label read like a genuine exit-1 failure when pulselog
+  had actually *killed* the command at its `timeoutMs`. The reason string (which lands in
+  the JSONL `message` and the alert email) now matches the `tcp`/`ssl`/`disk`/`service`
+  checks, which already say `timeout after Ns`. A command that genuinely exits non-zero is
+  unchanged (`exit N[: <stderr tail>]`). Surfaced by the 2026-07-01 shared-VPS incident
+  review, where a killed `ots-backlog` check read `exit 1 (timeout)`. (Minor, not patch:
+  the change is to observable output a JSONL consumer may match on.)
+
 ## [0.5.0] - 2026-06-15
 
 ### Documentation

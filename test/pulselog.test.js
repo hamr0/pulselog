@@ -8,7 +8,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, chmodSync, utimesSync, r
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { http, fileAge, disk, service } from '../src/checks.js';
+import { http, fileAge, disk, service, command } from '../src/checks.js';
 import { assembleEmail, sendEmail } from '../src/email.js';
 import { run } from '../src/run.js';
 
@@ -196,6 +196,28 @@ test('service: honors timeoutMs and labels a timeout', async (t) => {
   assert.equal(r.ok, false);
   assert.match(r.reason, /timeout/);
   assert.ok(elapsed < 3000, `should honor the 300ms timeout, took ${elapsed}ms`);
+});
+
+// ── (a2) command timeout reads `timeout after Ns`, not the misleading `exit 1` ────
+// A kill by timeout gives execFile err.code === null → synthesised 1, so the old
+// `exit 1 (timeout)` read like a genuine exit-1 failure. Now it aligns with the other
+// checks. A genuine non-zero exit must still read `exit N` — the two paths stay distinct.
+test('command: a timeout kill reads "timeout after Ns", not "exit 1"', async (t) => {
+  const start = Date.now();
+  const r = await command({ command: 'sh', args: ['-c', 'sleep 10'], timeoutMs: 1000 });
+  const elapsed = Date.now() - start;
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /^timeout after \d+s/);
+  assert.doesNotMatch(r.reason, /exit 1/, 'must not synthesise an exit code for a kill');
+  assert.ok(elapsed < 4000, `should honor the 1s timeout, took ${elapsed}ms`);
+});
+
+test('command: a genuine non-zero exit still reads "exit N"', async (t) => {
+  const r = await command({ command: 'sh', args: ['-c', 'echo boom >&2; exit 3'] });
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /^exit 3/);
+  assert.match(r.reason, /boom/, 'stderr tail preserved');
+  assert.doesNotMatch(r.reason, /timeout/, 'a real exit is not a timeout');
 });
 
 // ── (b) in-run retry: a transient failure is re-probed before it pages ───────────

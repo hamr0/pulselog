@@ -19,3 +19,6 @@ npm-debug.log*
 # local working state (stash + machine-local settings; memory/*.md are tracked)
 .claude/stash/
 .claude/settings.local.json
+
+# litectx impact-analysis cache (local tooling)
+.litectx/

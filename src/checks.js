@@ -181,7 +181,15 @@ export async function command(cfg) {
   const { code, stderr, killed } = await exec(cmd, args, timeoutMs);
   const ok = code === 0;
   const tail = stderr.trim().slice(0, 200);
-  return { ok, reason: ok ? 'exit 0' : `exit ${code}${killed ? ' (timeout)' : ''}${tail ? ': ' + tail : ''}` };
+  // A timeout kill gives execFile err.code === null (→ synthesised 1 in exec), so the
+  // `1` is not a real exit code. Phrase it as `timeout after Ns`, matching tcp/ssl/disk/
+  // service, instead of the misleading `exit 1 (timeout)`. Genuine non-zero: `exit N`.
+  const reason = ok
+    ? 'exit 0'
+    : killed
+      ? `timeout after ${secs(timeoutMs)}s${tail ? ': ' + tail : ''}`
+      : `exit ${code}${tail ? ': ' + tail : ''}`;
+  return { ok, reason };
 }
 
 /** type → check function. Config `type` keys map here. */
