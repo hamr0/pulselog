@@ -8,7 +8,13 @@
     "email": "ops@example.com",
     "from": "alerts@myapp.com",
     "app": "myapp",
-    "logTail": "/var/lib/myapp/errors.jsonl"
+    "logTail": "/var/lib/myapp/errors.jsonl",
+    "fallback": {
+      "when": "always",
+      "command": "curl",
+      "args": ["-m", "10", "-fsS", "-d", "@-", "https://ntfy.sh/my-secret-topic"],
+      "timeoutMs": 10000
+    }
   },
   "checks": [
     { "type": "http", "name": "api", "enabled": true, "url": "http://127.0.0.1:3000/api/health", "expectStatus": 200, "timeoutMs": 5000 },

@@ -12,7 +12,7 @@ import {
 import { spawnSync } from 'node:child_process';
 import { join, basename } from 'node:path';
 import { createSink } from './sink.js';
-import { sendEmail } from './email.js';
+import { normalizeFallback, dispatchAlert } from './fallback.js';
 import { dumpDb, dbDest } from './dumpers.js';
 
 const DAY_MS = 86_400_000;
@@ -74,6 +74,7 @@ export async function runBackup({ configPath, now = Date.now() }) {
     throw new Error('backup needs at least one source: "db", "include", or "command"');
   }
   if (!b.keepLast && !b.keepDays) throw new Error('backup needs "keepLast" and/or "keepDays"');
+  const fb = normalizeFallback(b.fallback); // loud on a malformed fallback, before any work
 
   const app = b.app || 'app';
   const ts = new Date(now).toISOString();
@@ -157,10 +158,15 @@ export async function runBackup({ configPath, now = Date.now() }) {
     if (b.history) createSink({ file: b.history, maxBytes: 0 }).emit(record);
     return { status: 'ok', bytes, files, kept, skipped, archive };
   } catch (err) {
-    // Record + alert the failure, then rethrow so the CLI exits 1 (D15).
-    const record = { ts, kind: 'backup', app, name: b.name, status: 'fail', message: err.message, skipped };
+    // Record + alert the failure, then rethrow so the CLI exits 1 (D15). Alert via email
+    // and/or the fallback sink; fold the fallback outcome into the same fail record (D5).
+    let fallback = null;
+    try {
+      ({ fallback } = dispatchAlert({ email: b.email, from: b.from, subject: `[${app}] backup FAILED — ${b.name}`, body: `${err.message}\n`, fb }));
+    } catch { /* never mask the real error */ }
+    const record = { ts, kind: 'backup', app, name: b.name, status: 'fail', message: err.message, skipped,
+      ...(fallback ? { fallback: { ok: fallback.ok, ...(fallback.err ? { err: fallback.err } : {}) } } : {}) };
     if (b.history) { try { createSink({ file: b.history, maxBytes: 0 }).emit(record); } catch { /* never mask the real error */ } }
-    if (b.email) { try { sendEmail({ to: b.email, from: b.from, subject: `[${app}] backup FAILED — ${b.name}`, body: `${err.message}\n` }); } catch { /* same */ } }
     throw err;
   } finally {
     if (stage) rmSync(stage, { recursive: true, force: true });

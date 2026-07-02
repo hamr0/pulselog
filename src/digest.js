@@ -6,7 +6,7 @@
 import { readFileSync } from 'node:fs';
 import { createSink } from './sink.js';
 import { runMetricsBatch, resolveMetric, flightlogSummary, loadWeeks, renderDigest } from './metrics.js';
-import { sendEmail } from './email.js';
+import { normalizeFallback, dispatchAlert } from './fallback.js';
 
 /** Read a file, or '' if it's missing/unreadable (a fresh app has no history yet). */
 function readOrEmpty(path) {
@@ -17,7 +17,7 @@ function readOrEmpty(path) {
  * Run the weekly digest once.
  * @param {{ configPath: string, dryRun?: boolean, now?: number }} args
  * @returns {{ app: string, week: string, metrics: Record<string, number|null>,
- *   flagged: string[], delivered: 'mail'|'sendmail'|'none'|'skipped'|'dry-run' }}
+ *   flagged: string[], delivered: 'mail'|'sendmail'|'fallback'|'none'|'skipped'|'dry-run' }}
  */
 export function runDigest({ configPath, dryRun = false, now = Date.now() }) {
   const config = JSON.parse(readFileSync(configPath, 'utf8'));
@@ -28,6 +28,7 @@ export function runDigest({ configPath, dryRun = false, now = Date.now() }) {
   const app = d.app || 'app';
   const ts = new Date(now).toISOString();
   const metricNames = d.metrics.map((m) => m.name);
+  const fb = normalizeFallback(d.fallback); // loud on a malformed fallback (exit 1)
 
   // 1. collect declared metrics → snapshot values (broken → null). An optional
   //    `metricsCommand` emits one JSON object of named integers in a single pass;
@@ -73,15 +74,17 @@ export function runDigest({ configPath, dryRun = false, now = Date.now() }) {
 
   // 5. deliver: print on dry-run; skip a flat week if asked; else email if a
   //    recipient is set; otherwise the history line is the artifact.
-  /** @type {'mail'|'sendmail'|'none'|'skipped'|'dry-run'} */
+  /** @type {'mail'|'sendmail'|'fallback'|'none'|'skipped'|'dry-run'} */
   let delivered;
   if (dryRun) {
     process.stdout.write(`Subject: ${subject}\n\n${body}\n`);
     delivered = 'dry-run';
   } else if (d.skipIfFlat && flat) {
     delivered = 'skipped';
-  } else if (d.email) {
-    delivered = sendEmail({ to: d.email, from: d.from, subject, body });
+  } else if (d.email || fb) {
+    // Fallback carries the SAME already-redacted render (counts + names only) — privacy holds.
+    const { emailed, fallback } = dispatchAlert({ email: d.email, from: d.from, subject, body, fb });
+    delivered = emailed ? emailed.transport : (fallback ? 'fallback' : 'none');
   } else {
     delivered = 'none';
   }

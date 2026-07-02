@@ -7,7 +7,8 @@ import { readFileSync } from 'node:fs';
 import { hostname } from 'node:os';
 import { CHECKS } from './checks.js';
 import { createSink } from './sink.js';
-import { assembleEmail, sendEmail } from './email.js';
+import { assembleEmail } from './email.js';
+import { normalizeFallback, dispatchAlert } from './fallback.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -56,6 +57,9 @@ export async function run({ configPath }) {
   const enabled = (config.checks || []).filter((c) => c.enabled !== false);
   const host = hostname();
   const retryDefaults = config.retry || {};
+  // Validate the fallback block up front so a malformed one fails loud (exit 1) even on a
+  // green run — never silently useless during the incident it exists for.
+  const fb = normalizeFallback(config.alert ? config.alert.fallback : undefined);
 
   const results = await Promise.all(enabled.map((cfg) => probe(cfg, retryDefaults)));
 
@@ -80,9 +84,17 @@ export async function run({ configPath }) {
     sink.emit({ ts, kind: 'health', name: '_heartbeat', message: `all ${results.length} checks ok`, status: 'ok', host });
   }
 
-  if (failures.length && config.alert && config.alert.email) {
+  if (failures.length && config.alert && (config.alert.email || fb)) {
     const { subject, body } = assembleEmail({ failures, host, ts, alert: config.alert });
-    sendEmail({ to: config.alert.email, from: config.alert.from, subject, body });
+    const { emailed, fallback } = dispatchAlert({ email: config.alert.email, from: config.alert.from, subject, body, fb });
+    // D5: record the delivery attempt(s) so "emailed: fail, fallback: ok" is durable.
+    if (emailed || fallback) {
+      sink.emit({
+        ts, kind: 'alert', name: '_alert', status: (emailed && emailed.ok) || (fallback && fallback.ok) ? 'ok' : 'fail', host,
+        emailed: emailed ? { transport: emailed.transport, ok: emailed.ok } : null,
+        fallback: fallback ? { ok: fallback.ok, ...(fallback.err ? { err: fallback.err } : {}) } : null,
+      });
+    }
   }
 
   return { total: results.length, failures: failures.length };

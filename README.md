@@ -73,6 +73,23 @@ App-specific probes (mail-queue depth, `pg_isready`, a bespoke script) go throug
 
 Every check takes a `timeoutMs`, and a noisy host won't page on a single blip: set `retries` (default 0) + `retryDelayMs` (default 1000) per check, or a top-level `retry` block as the default each check can override — a check that recovers on a retry stays green; one that fails every attempt is recorded once. (Retry is per-run only; "page after N consecutive runs" is alert policy for your JSONL consumer, not pulselog.)
 
+**Fallback alert** — a dead MTA shouldn't silence the tool (the *circular* trap: the alert that says "mail is broken" rides the same broken path and bounces too). Add a `fallback` to `alert` (and, the same shape, to `digest`/`backup`) — a **command** that receives the alert body on **stdin** and the subject as **`PULSELOG_SUBJECT`**; wire ntfy, Slack/Discord, `logger`, or an SMS CLI via `curl` (no new dependency — it's the same no-shell spawn every `command` check uses):
+
+```jsonc
+"alert": {
+  "email": "ops@example.com",              // omit → the fallback is the sole sink (a box with no MTA)
+  "fallback": {
+    "when": "always",                      // default; the only mode that also survives an async bounce
+                                           //   after a clean handoff. Or "on-primary-failure".
+    "command": "curl",
+    "args": ["-m", "10", "-fsS", "-d", "@-", "https://ntfy.sh/my-secret-topic"],
+    "timeoutMs": 10000
+  }
+}
+```
+
+It's **best-effort**: a broken sink is recorded (an outcome shows in the JSONL — `emailed`/`fallback`), never throws, never changes the exit code. `sendmail` exit 0 means *queued*, not *delivered*, so `on-primary-failure` can't catch an async bounce — hence `always` is the default; for true bounce detection watch deliverability **off-box** (see the integration guide). A malformed `fallback` (no `command`) fails the run loud, like any bad config.
+
 **Digest metrics** — each is a name and a command that prints **one integer**; that integer is *all* pulselog stores. Anything else records `null` for that metric (noted, never fatal):
 
 ```jsonc
@@ -133,7 +150,7 @@ jq -s 'sort_by(.ts)' errors.jsonl health.jsonl stats.jsonl backup.jsonl
 
 JSONL files are created `0600` (owner-only) so data isn't world-readable on a shared host. **Exit codes:** `0` when a run completed (failures are emailed + logged — the alert is the signal, so cron stays quiet); `1` only when the run itself couldn't proceed (missing/invalid config), so a misconfiguration surfaces loudly.
 
-50 tests pass on CI (Node 22) — health checks (live local HTTP server, tmp files), digest (metric parse, batch `metricsCommand`, ISO-week WoW, the flightlog 7-day rollup, render, and a **mutation-tested privacy invariant**: an error's message/stack must never reach the history line or the email), and backup (staging, atomic publish, retention, and the security regressions). Ships TypeScript types generated from JSDoc — `import { run, runDigest } from "pulselog"` gives autocomplete out of the box.
+67 tests pass on CI (Node 22) — health checks (live local HTTP server, tmp files), digest (metric parse, batch `metricsCommand`, ISO-week WoW, the flightlog 7-day rollup, render, and a **mutation-tested privacy invariant**: an error's message/stack must never reach the history line or the email), and backup (staging, atomic publish, retention, and the security regressions). Ships TypeScript types generated from JSDoc — `import { run, runDigest } from "pulselog"` gives autocomplete out of the box.
 
 ## Docs
 

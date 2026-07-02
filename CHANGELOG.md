@@ -5,6 +5,33 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-07-02
+
+Opt-in **fallback alert sink** — a second, out-of-band delivery path so a dead MTA can't
+silence pulselog (the "circular alert" gap: the one alert that says *mail is broken* rides
+the same broken path and bounces). Zero new dependencies — it reuses the subprocess
+primitive pulselog already had. Absent config → byte-for-byte prior behavior.
+
+### Added
+- **`fallback` block on `alert` / `digest` / `backup`.** A `command` — spawned with **no
+  shell**, like every other pulselog command — receives the rendered alert body on
+  **stdin** and the subject as **`PULSELOG_SUBJECT`**; wire ntfy / Slack / a `logger` / an
+  SMS CLI via `curl`. Fires per `when`: **`always`** (default — the only mode that also
+  survives an async bounce *after* a clean handoff) or **`on-primary-failure`** (only when
+  the local MTA handoff fails). With no `email` set, the fallback is the sole sink (a box
+  with no MTA). **Best-effort and never fatal:** a broken sink is recorded, never throws,
+  never changes the exit code. A malformed `fallback` (no `command`) fails the run loud,
+  like other bad config. For the digest, the sink carries the same already-redacted render
+  (counts + names only) — the privacy invariant holds.
+- **`kind:"alert"` delivery record** (health) and a `fallback` field on the backup fail
+  record, so "emailed: fail, fallback: ok" is durable in the JSONL.
+
+### Changed
+- **`sendEmail` now returns `{ transport, ok }`** (was a bare transport string) so the mail
+  handoff's success is observable — `on-primary-failure` reads it. Internal callers updated;
+  `digest.delivered` is unchanged except it can now read `"fallback"` when only the sink
+  delivered.
+
 ## [0.6.0] - 2026-07-01
 
 An observable-label fix to the `command` check's timeout reason. No config change,

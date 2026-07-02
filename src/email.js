@@ -4,6 +4,7 @@
 // runs Postfix), so this stays zero-dependency. Synchronous: a cron one-shot.
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { spawnDelivery } from './deliver.js';
 
 /**
  * Build the alert from the failing checks.
@@ -50,8 +51,12 @@ export function assembleEmail({ failures, host, ts, alert }) {
 const has = (cmd) => spawnSync('sh', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }).status === 0;
 
 /**
- * Send via `mail`, else `sendmail`, else warn to stderr (never throw).
- * @returns {'mail'|'sendmail'|'none'}
+ * Send via `mail`, else `sendmail`, else warn to stderr (never throw). Reports the local
+ * handoff outcome: `transport` names the tool used (`'none'` when no MTA is on PATH), and
+ * `ok` is whether that handoff exited cleanly. NB: a clean handoff (`ok:true`) means
+ * *queued*, not *delivered* — an async bounce can still follow. The fallback alert sink
+ * (0.7.0) reads `ok` to decide whether to fire on `on-primary-failure`.
+ * @returns {{ transport: 'mail'|'sendmail'|'none', ok: boolean }}
  */
 export function sendEmail({ to, from, subject, body }) {
   // Header fields must be single-line: a newline in any of them (they can come from
@@ -62,16 +67,16 @@ export function sendEmail({ to, from, subject, body }) {
     const args = ['-s', subject];
     if (from) args.push('-r', from);
     args.push(to);
-    spawnSync('mail', args, { input: body });
-    return 'mail';
+    const { ok } = spawnDelivery('mail', args, { input: body });
+    return { transport: 'mail', ok };
   }
   if (has('sendmail')) {
     const headers = [from && `From: ${from}`, `To: ${to}`, `Subject: ${subject}`, 'Content-Type: text/plain; charset=utf-8', '']
       .filter(Boolean)
       .join('\n');
-    spawnSync('sendmail', ['-t'], { input: headers + '\n' + body });
-    return 'sendmail';
+    const { ok } = spawnDelivery('sendmail', ['-t'], { input: headers + '\n' + body });
+    return { transport: 'sendmail', ok };
   }
   process.stderr.write(`pulselog: no \`mail\`/\`sendmail\` on PATH; would alert ${to}: ${subject}\n`);
-  return 'none';
+  return { transport: 'none', ok: false };
 }

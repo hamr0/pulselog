@@ -145,10 +145,23 @@ test('sendEmail[sec]: a newline in a header field cannot inject a mail header', 
   t.after(() => { process.env.PATH = orig; });
 
   const via = sendEmail({ to: 'ops@x', from: 'a@b', subject: 'hi\nBcc: attacker@evil.test', body: 'B' });
-  assert.equal(via, 'mail');
+  assert.equal(via.transport, 'mail');
+  assert.equal(via.ok, true, 'fake mail exits 0 → handoff reported ok');
   const got = readFileSync(rec, 'utf8');
   assert.doesNotMatch(got, /\n/, 'no newline reaches the header fields');
   assert.match(got, /Bcc: attacker@evil\.test/, 'the injection attempt is flattened into the subject text, not a header');
+});
+
+// The handoff-outcome signal the fallback sink (0.7.0) reads. A non-zero `mail` exit
+// must surface as ok:false — not the old "returned 'mail' regardless of exit" behavior.
+test('sendEmail: reports ok:false when the MTA handoff exits non-zero', (t) => {
+  const dir = tmp(t);
+  writeFileSync(join(dir, 'mail'), '#!/bin/sh\nexit 3\n'); // handoff fails
+  chmodSync(join(dir, 'mail'), 0o755);
+  shadowPath(t, dir);
+  const via = sendEmail({ to: 'ops@x', from: 'a@b', subject: 's', body: 'B' });
+  assert.equal(via.transport, 'mail', 'transport still identified');
+  assert.equal(via.ok, false, 'a non-zero mail handoff is reported failed, not swallowed');
 });
 
 // ── (M1) CLI refuses a config others can write — it executes commands as us ──────

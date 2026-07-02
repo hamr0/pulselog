@@ -21,13 +21,14 @@ Every signal is **one JSON line** in flightlog's core dialect (`ts`, `kind`, …
 This file is the complete contract: every option, all three modes, what pulselog
 deliberately does **not** do, the privacy model, and the gotchas.
 
-> **Status:** `0.6.0` is published — all three modes (health + digest + **`backup`**)
+> **Status:** `0.7.0` is published — all three modes (health + digest + **`backup`**)
 > are on npm. `0.4.0` added a per-check `timeoutMs` and opt-in in-run `retries`, and a
 > security pass (config-perms gate, backup dir/umask tightening, per-engine password env,
 > name-escape guards). `0.4.1` refines the config-ownership gate to allow a **root-owned**
 > config (not just self-owned), matching `ssh`. `0.6.0` aligns the `command` check's
 > timeout reason with the others (`timeout after Ns`, not the misleading `exit 1
-> (timeout)`). Defaults are unchanged.
+> (timeout)`). `0.7.0` adds an opt-in **`alert.fallback`** sink (a second, out-of-band
+> delivery path so a dead MTA can't silence the tool). Defaults are unchanged.
 
 ## What pulselog is and is NOT
 
@@ -384,8 +385,56 @@ record.
 > of its own. Whether an alert lands in the inbox or the spam folder rides entirely on
 > the transport you put behind `mail`/`sendmail`. For reputation-sensitive alerts,
 > point the shim at a relay that **signs (DKIM) and has clean IP reputation**, and keep
-> a secondary signal (the JSONL line, or a `file-age` dead-man's-switch on a reachable
-> host) so a spam-foldered alert isn't your only notice.
+> a secondary signal so a spam-foldered — or wholly bounced — alert isn't your only
+> notice. The concrete answer is the **`alert.fallback`** sink below (an out-of-band push
+> that doesn't ride the mail path at all); the JSONL line and an off-box `file-age`
+> dead-man's-switch remain complementary passive signals.
+
+### Fallback alert sink — a second path so a dead MTA can't silence you
+
+The failure mode the note above warns about is **circular**: if the mail path breaks, the
+one alert that would tell you rides the same broken path and bounces too (the 2026-07
+addypin incident — a CDN-proxied `mail.` record broke SPF/rDNS and every message bounced
+at Gmail for a month, health alerts included). Add a `fallback` to any alert-bearing block
+(`alert`, `digest`, `backup`) — a **command** pulselog spawns (no shell, like every other
+`command`) that receives the rendered body on **stdin** and the subject as
+**`PULSELOG_SUBJECT`**. Wire ntfy, a Slack/Discord webhook, `logger`, or an SMS CLI via
+`curl` — no new dependency.
+
+```jsonc
+"alert": {
+  "email": "ops@example.com",     // omit → the fallback is the SOLE sink (a box with no MTA)
+  "fallback": {
+    "when": "always",             // default. The only mode that also survives an async bounce
+                                  //   AFTER a clean handoff (sendmail exit 0 = queued, not delivered).
+                                  //   Or "on-primary-failure" — fire only when the local handoff fails.
+    "command": "curl",
+    "args": ["-m", "10", "-fsS", "-d", "@-", "https://ntfy.sh/my-secret-topic"],
+    "timeoutMs": 10000            // killed past this; a kill counts as a failed fallback
+  }
+}
+```
+
+- **When it fires:** `always` (default) fires every alert regardless; `on-primary-failure`
+  fires only when the local `mail`/`sendmail` handoff exits non-zero / is missing. With no
+  `email`, the fallback is the sole sink and always fires.
+- **Best-effort, never fatal:** a broken sink (non-zero, missing binary, timeout) is
+  **recorded, not raised** — it never throws and never changes the exit code. The delivery
+  outcome is durable: health writes a `kind:"alert"` line (`emailed`/`fallback` outcomes);
+  backup folds a `fallback` field into its fail record.
+- **Privacy holds:** the digest fallback carries the same already-redacted render (counts +
+  group names only), never raw messages/stacks.
+- **Loud on misconfig:** a `fallback` with no `command` (or a bad `when`/`args`) fails the
+  run with exit 1, like any other bad config — it won't sit silently useless.
+- **Secrets:** an ntfy topic / webhook token lives in `args`, so it's a secret in the
+  config — the ownership gate + `0600`-ish config perms cover it; don't world-read the file.
+  pulselog never logs the command or args (only `transport`/`ok`/`err`), so the token stays
+  out of the JSONL.
+- **True bounce detection stays off-box:** because `sendmail` exit 0 only means *queued*,
+  `on-primary-failure` can't catch an async bounce — watch your own deliverability from a
+  second host (a `command` check that greps the sending box's `maillog` over SSH; it must
+  live off the sending host — an unprivileged service user can't read `maillog`, and its
+  own alert would ride the same broken path).
 
 > **Header fields are flattened to one line.** `to`/`from`/`subject` come from config,
 > so a newline in any of them could otherwise inject extra mail headers (e.g. a smuggled
