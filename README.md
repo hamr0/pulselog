@@ -152,14 +152,6 @@ JSONL files are created `0600` (owner-only) so data isn't world-readable on a sh
 
 67 tests pass on CI (Node 22) — health checks (live local HTTP server, tmp files), digest (metric parse, batch `metricsCommand`, ISO-week WoW, the flightlog 7-day rollup, render, and a **mutation-tested privacy invariant**: an error's message/stack must never reach the history line or the email), and backup (staging, atomic publish, retention, and the security regressions). Ships TypeScript types generated from JSDoc — `import { run, runDigest } from "pulselog"` gives autocomplete out of the box.
 
-## Docs
-
-| | |
-|---|---|
-| **[Integration Guide](pulselog.context.md)** | The complete adopter contract — both modes, every option, the record shapes, the privacy spine, the refusals. Hand it to your AI assistant. |
-| **[PRD](docs/01-product/2026-05-31-prd.md)** | Locked decisions + *why*, success criteria, the refusals, build order. *(repo-only)* |
-| **[CHANGELOG](CHANGELOG.md)** | keep-a-changelog; an entry every release. |
-
 ## flightlog + pulselog — a lightweight server-log suite
 
 Two halves of one observability story for apps you run yourself: a **zero-dep,

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-07-02
+
+### Changed
+- **README: dropped the `## Docs` section** (the table linking the Integration Guide, PRD,
+  and CHANGELOG). Docs/packaging only — no code or API change. The Integration Guide
+  (`pulselog.context.md`) and CHANGELOG still ship in the tarball.
+
 ### Added
 - **`examples/mail-delivery-check.sh`** — an off-box "is my box still delivering to the
   operator?" recipe: a `command` check run from a *second* host that greps the sending
@@ -256,7 +263,8 @@ publishing (signed provenance, no token). Zero production dependencies
   throws on import, directing users to the repo. Reserves `pulselog` while `0.1.0`
   is built.
 
-[Unreleased]: https://github.com/hamr0/pulselog/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/hamr0/pulselog/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/hamr0/pulselog/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/hamr0/pulselog/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/hamr0/pulselog/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/hamr0/pulselog/compare/v0.4.1...v0.5.0
