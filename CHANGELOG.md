@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`examples/mail-delivery-check.sh`** — an off-box "is my box still delivering to the
+  operator?" recipe: a `command` check run from a *second* host that greps the sending
+  box's `maillog` over SSH and reads the **latest** delivery outcome. Complements the
+  `0.7.0` `alert.fallback` sink — the fallback pushes an alert out-of-band *now*, this
+  tells you *why* mail is bouncing (the async-bounce case `on-primary-failure` can't see).
+  Stateless (latest-outcome, so a recovered bounce clears), `|| true` so a down box reads
+  green, and a clean no-op until `VPS_HOST` + `MAIL_CHECK_RECIPIENT` are set. The `maillog`
+  grep is Postfix-specific. Docs/packaging only — no code or API change.
+
 ## [0.7.0] - 2026-07-02
 
 Opt-in **fallback alert sink** — a second, out-of-band delivery path so a dead MTA can't
@@ -244,7 +256,10 @@ publishing (signed provenance, no token). Zero production dependencies
   throws on import, directing users to the repo. Reserves `pulselog` while `0.1.0`
   is built.
 
-[Unreleased]: https://github.com/hamr0/pulselog/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/hamr0/pulselog/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/hamr0/pulselog/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/hamr0/pulselog/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/hamr0/pulselog/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/hamr0/pulselog/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/hamr0/pulselog/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/hamr0/pulselog/compare/v0.3.0...v0.3.1

@@ -434,7 +434,10 @@ at Gmail for a month, health alerts included). Add a `fallback` to any alert-bea
   `on-primary-failure` can't catch an async bounce — watch your own deliverability from a
   second host (a `command` check that greps the sending box's `maillog` over SSH; it must
   live off the sending host — an unprivileged service user can't read `maillog`, and its
-  own alert would ride the same broken path).
+  own alert would ride the same broken path). Ship-ready recipe:
+  **`examples/mail-delivery-check.sh`** — stateless (latest-outcome, so a recovered bounce
+  clears), `|| true` so a down box reads green, and a clean no-op until you set `VPS_HOST` +
+  `MAIL_CHECK_RECIPIENT`. The `maillog` grep is Postfix-specific.
 
 > **Header fields are flattened to one line.** `to`/`from`/`subject` come from config,
 > so a newline in any of them could otherwise inject extra mail headers (e.g. a smuggled
