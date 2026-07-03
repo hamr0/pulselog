@@ -1,6 +1,6 @@
 {
   "name": "pulselog",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "description": "Zero-dependency scheduled external watcher: health checks (APIs/DBs/backups/SSL/services) + a weekly stats digest. Silent when green, email on signal, one JSONL line per result (flightlog-compatible).",
   "type": "module",
   "main": "./src/index.js",
@@ -22,6 +22,7 @@
     "config.example.json",
     "README.md",
     "pulselog.context.md",
+    "IMPLEMENTATION_GUIDE.md",
     "CHANGELOG.md"
   ],
   "scripts": {

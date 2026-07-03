@@ -168,6 +168,12 @@ JSONL dialect, so one `tail` / `jq` / uploader spans both. Embed [flightlog](htt
 | **Output** | one JSONL line per error | one JSONL line per result (same dialect) |
 | **Replaces** | Sentry, Rollbar, Bugsnag | hosted analytics, Pingdom, UptimeRobot |
 
+**Deploying the pair — or just one half?** The **[Implementation Guide](IMPLEMENTATION_GUIDE.md)**
+is a copy-paste, VPS-ready walkthrough: mail deliverability (SPF/DKIM/PTR),
+health/digest/backup config, systemd timers, and an off-box watchdog. **Part A** is
+flightlog alone, **Part B** is pulselog alone — read one, the other, or both. The same
+guide ships in both packages; there is no dependency between them.
+
 ## License
 
 Apache 2.0. See [LICENSE](LICENSE).

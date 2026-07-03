@@ -21,8 +21,15 @@ Every signal is **one JSON line** in flightlog's core dialect (`ts`, `kind`, …
 This file is the complete contract: every option, all three modes, what pulselog
 deliberately does **not** do, the privacy model, and the gotchas.
 
-> **Status:** `0.7.1` is published — all three modes (health + digest + **`backup`**)
-> are on npm. `0.4.0` added a per-check `timeoutMs` and opt-in in-run `retries`, and a
+For a copy-paste, VPS-ready **deployment** walkthrough — mail deliverability
+(SPF/DKIM/PTR), health/digest/backup config, systemd timers, an off-box watchdog,
+and the optional flightlog pairing — see the
+[Implementation Guide](IMPLEMENTATION_GUIDE.md) (Part B is pulselog; it ships in the
+package and needs no flightlog).
+
+> **Status:** `0.7.2` is published — all three modes (health + digest + **`backup`**)
+> are on npm, and `0.7.2` ships the deployment
+> **[Implementation Guide](IMPLEMENTATION_GUIDE.md)** in the package. `0.4.0` added a per-check `timeoutMs` and opt-in in-run `retries`, and a
 > security pass (config-perms gate, backup dir/umask tightening, per-engine password env,
 > name-escape guards). `0.4.1` refines the config-ownership gate to allow a **root-owned**
 > config (not just self-owned), matching `ssh`. `0.6.0` aligns the `command` check's

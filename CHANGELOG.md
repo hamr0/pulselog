@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-07-03
+
+### Added
+- **`IMPLEMENTATION_GUIDE.md`** — a copy-paste, VPS-ready deployment walkthrough, now
+  **shipped in the package** (added to the `files` allowlist) and linked from the README
+  and `pulselog.context.md`. Restructured from a repo-only observability playbook into two
+  standalone parts — **Part A** (flightlog, in-app error capture) and **Part B**
+  (pulselog: mail deliverability, health, digest, backup, off-box watch) — so either tool
+  can be adopted alone; the digest↔flightlog error rollup is marked as the one optional
+  seam. The **same guide ships in both flightlog and pulselog, with no dependency** between
+  the packages. Docs/packaging only — no code or API change.
+
 ## [0.7.1] - 2026-07-02
 
 ### Changed
@@ -263,7 +275,8 @@ publishing (signed provenance, no token). Zero production dependencies
   throws on import, directing users to the repo. Reserves `pulselog` while `0.1.0`
   is built.
 
-[Unreleased]: https://github.com/hamr0/pulselog/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/hamr0/pulselog/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/hamr0/pulselog/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/hamr0/pulselog/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/hamr0/pulselog/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/hamr0/pulselog/compare/v0.5.0...v0.6.0
