@@ -22,3 +22,8 @@ npm-debug.log*
 
 # litectx impact-analysis cache (local tooling)
 .litectx/
+
+# Agent / IDE scratch — never commit (per hamr0 LIBRARY_CONVENTIONS §7)
+.claude/
+.litectx/
+.idea/
