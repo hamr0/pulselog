@@ -29,7 +29,8 @@
     "typecheck": "tsc --noEmit",
     "build:types": "tsc",
     "prepublishOnly": "npm run build:types",
-    "test": "node --test"
+    "test": "node --test",
+    "check:lockfile": "node scripts/check-lockfile.mjs"
   },
   "engines": {
     "node": ">=18"
