@@ -74,7 +74,7 @@ The three modes form a triad: health (is it up), stats (how is it trending), bac
 
 - Writers share flightlog core fields (`ts`, `kind`, ...) so one toolset reads every stream (docs/archive/2026-05-31-prd.md:330-331).
 - Each writer owns its own file, never a shared one, because two processes appending plus rotation is a race the PRD forbids (docs/archive/2026-05-31-prd.md:331-333).
-- `kind` values: `uncaught`/`manual` (flightlog), `health`, `stats`, `backup` (docs/archive/2026-05-31-prd.md:333-334).
+- `kind` values: `uncaught`/`manual` (flightlog), `health`, `alert` (health delivery outcome), `stats`, `delivery` (digest send outcome, 0.8.0; the week-over-week reader ignores it), `backup` (docs/archive/2026-05-31-prd.md:333-334, 549-551).
 - Compose at read time: `jq -s 'sort_by(.ts)' errors.jsonl health.jsonl stats.jsonl backup.jsonl` (docs/archive/2026-05-31-prd.md:334-335).
 
 ## Self-failure handling

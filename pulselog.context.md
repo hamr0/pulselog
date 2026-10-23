@@ -179,7 +179,7 @@ email) is built in. You never write a `stats.js` again.
 {
   "digest": {
     "app": "addypin",
-    "history": "/var/lib/addypin/stats.jsonl",  // pulselog writes + reads this (one line/week, the record)
+    "history": "/var/lib/addypin/stats.jsonl",  // pulselog writes + reads this (one stats line/week, the record; + a delivery line per send)
     "email": "ops@addypin.com",                 // omit / --dry-run → print, no send
     "from": "alerts@addypin.com",
     "weeks": 4,                                   // rows in the table (default 4)
@@ -196,7 +196,7 @@ email) is built in. You never write a `stats.js` again.
 | Option | Default | Meaning |
 |---|---|---|
 | `app` | `"app"` | Label in the snapshot line, email subject, and header. |
-| `history` | — | The snapshot JSONL pulselog appends to (one line/week) and reads back for the table. **Its own file.** |
+| `history` | — | The snapshot JSONL pulselog appends to (one `stats` line/week, plus a `delivery` line per send — see below) and reads back for the table. **Its own file.** |
 | `email` / `from` | — | Recipient/sender. Omit → no email; the history line is the artifact. |
 | `mailTimeoutMs` | `30000` | Cap on the `mail`/`sendmail` handoff (0.8.0). Past it the send is killed and counts as a **failed primary** (reason `timeout`). Not `timeoutMs` — see "Email transport". |
 | `weeks` | `4` | How many weeks the table shows. |

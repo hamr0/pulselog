@@ -25,7 +25,7 @@
 pulselog is the outside sibling to flightlog. flightlog records **what broke** *inside* your app (in-process); pulselog probes **whether it's up** from outside, summarizes the foundational numbers weekly, and keeps safe rotated backups. The triad: **health** (is it up) · **stats** (how's it trending) · **backup** (is it safe). Three modes, **one config**, one JSONL dialect — composed at read time, never one shared file.
 
 - **health** (default) — run enabled checks concurrently, **stay silent on green**, write one `kind:"health"` line per failure, send **one** summary email when anything fails.
-- **digest** (`--digest`) — one weekly run: collect adopter-declared **metrics** (each a command that prints one integer), append **one `kind:"stats"` line per week** to a history file, and email a week-over-week table. Optional flightlog 7-day error rollup — **counts and names only, never messages or stacks**.
+- **digest** (`--digest`) — one weekly run: collect adopter-declared **metrics** (each a command that prints one integer), append **one `kind:"stats"` line per week** to a history file (plus a `kind:"delivery"` line recording whether the email left the box), and email a week-over-week table. Optional flightlog 7-day error rollup — **counts and names only, never messages or stacks**.
 - **backup** (`--backup`) — stage **curated DB dumps** (sqlite/postgres/mysql, each with the consistency-safe defaults) plus **static `include`s** (certs, configs, keys), tar atomically, enforce a size floor, and roll retention. One `kind:"backup"` line per run; a failed backup **exits `1` (loud)** and never rotates a good archive away.
 
 Same ethos as flightlog — embed it, don't run it; zero deps; no daemon, no SaaS, no telemetry. It is **not** a metrics database, dashboard, or uptime SaaS, **not** a general logger, **not** a backup *engine* (it wraps your dump, doesn't replace it), and ships **no UI or server** — the JSONL is the whole read surface. The only per-app customization is *which* checks, *which* metrics, and *what* to back up; pulselog owns the shape (probe → emit → alert).
@@ -90,14 +90,14 @@ Every check takes a `timeoutMs`, and a noisy host won't page on a single blip: s
 }
 ```
 
-It's **best-effort**: a broken sink is recorded (an outcome shows in the JSONL — `emailed`/`fallback`), never throws, never changes the exit code. `sendmail` exit 0 means *queued*, not *delivered*, so `on-primary-failure` can't catch an async bounce — hence `always` is the default; for true bounce detection watch deliverability **off-box** (see the integration guide). A malformed `fallback` (no `command`) fails the run loud, like any bad config.
+It's **best-effort**: a broken sink is recorded (an outcome shows in the JSONL — `emailed`/`fallback`), never throws. A hung primary send is cut off at `mailTimeoutMs` (default 30s, 0.8.0) and counts as a failed primary; the exit code turns `1` only when health/digest attempted a send and *every* path failed. `sendmail` exit 0 means *queued*, not *delivered*, so `on-primary-failure` can't catch an async bounce — hence `always` is the default; for true bounce detection watch deliverability **off-box** (see the integration guide). A malformed `fallback` (no `command`) fails the run loud, like any bad config.
 
 **Digest metrics** — each is a name and a command that prints **one integer**; that integer is *all* pulselog stores. Anything else records `null` for that metric (noted, never fatal):
 
 ```jsonc
 "digest": {
   "app": "myapp",
-  "history": "/var/lib/myapp/stats.jsonl",      // its OWN file; one line appended per week
+  "history": "/var/lib/myapp/stats.jsonl",      // its OWN file; one stats line per week (+ a kind:"delivery" line per send)
   "email": "ops@example.com",                    // omit → the history line is the artifact
   "metrics": [                                    // ← the ONLY per-app customization
     { "name": "users", "command": "sqlite3", "args": ["/var/lib/myapp/app.db", "select count(distinct customer) from pins"] },
@@ -152,7 +152,7 @@ jq -s 'sort_by(.ts)' errors.jsonl health.jsonl stats.jsonl backup.jsonl
 
 JSONL files are created `0600` (owner-only) so data isn't world-readable on a shared host. **Exit codes:** `0` when a run completed (failures are emailed + logged — the alert is the signal, so cron stays quiet); `1` when the run itself couldn't proceed (missing/invalid config), a backup failed, or (0.8.0) a health/digest send was attempted and *every* delivery path failed — so a dead alert path surfaces in `systemctl --failed` instead of vanishing. Green runs still exit `0` and send nothing.
 
-67 tests pass on CI (Node 22) — health checks (live local HTTP server, tmp files), digest (metric parse, batch `metricsCommand`, ISO-week WoW, the flightlog 7-day rollup, render, and a **mutation-tested privacy invariant**: an error's message/stack must never reach the history line or the email), and backup (staging, atomic publish, retention, and the security regressions). Ships TypeScript types generated from JSDoc — `import { run, runDigest } from "pulselog"` gives autocomplete out of the box.
+92 tests pass on CI (Node 22) — health checks (live local HTTP server, tmp files), digest (metric parse, batch `metricsCommand`, ISO-week WoW, the flightlog 7-day rollup, render, and a **mutation-tested privacy invariant**: an error's message/stack must never reach the history line or the email), and backup (staging, atomic publish, retention, and the security regressions). Ships TypeScript types generated from JSDoc — `import { run, runDigest } from "pulselog"` gives autocomplete out of the box.
 
 ## flightlog + pulselog — a lightweight server-log suite
 
