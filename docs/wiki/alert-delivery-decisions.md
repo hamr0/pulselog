@@ -58,6 +58,7 @@ Decision entry dated 2026-10-23 (docs/archive/2026-05-31-prd.md:533).
   - Green runs, flat-week skips and "nothing configured" still exit 0, so silent on green holds. D15 (backup) is unchanged (docs/archive/2026-05-31-prd.md:555-556).
   - This supersedes §15 D4 ("never changes the exit code") for this one case. A broken sink still never throws (docs/archive/2026-05-31-prd.md:556-557).
 - **D4, `pulselog --test-alert`** (with `--digest`/`--backup`) sends one test message through the primary and the fallback, ignoring `when`. It reports per-path results, exits 1 on any configured failure or when nothing is configured, and writes no JSONL. Validation belongs under the real unit sandbox (docs/archive/2026-05-31-prd.md:558-560).
+  - It always sends for real, so `--dry-run` with it is a usage error (exit 1, nothing sent), as is passing both `--digest` and `--backup`. These were added after the PRD entry, so the source is the code and the contract (bin/pulselog.js:73-80; pulselog.context.md:562-565).
 - **D5, honest result line**, for example `→ mail:fail(timeout), fallback:fail(exit 3)`. `mail`/`sendmail` exit 0 is documented as queued, not delivered (docs/archive/2026-05-31-prd.md:561-562).
 
 ### Refusals (unchanged)

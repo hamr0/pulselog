@@ -163,11 +163,12 @@ jobs:
             "noEmit": true, "types": ["node"] } }
           JSON
           # The README's documented entry points. `run()` returns a summary object, so the
-          # check DEREFERENCES it (`.total`, `.failures`) rather than merely calling it — a
-          # call-only check still compiles when a return is annotated as a bare `object`,
+          # check DEREFERENCES it (`.total`, `.failures`; likewise `testAlert`'s `.ok`/
+          # `.lines`) rather than merely calling it — a call-only check still compiles
+          # when a return is annotated as a bare `object`,
           # which is the bug class this gate exists to catch.
           cat > app.ts <<'TS'
-          import { run, runDigest, runBackup, CHECKS } from 'pulselog';
+          import { run, runDigest, runBackup, testAlert, CHECKS } from 'pulselog';
 
           const result = await run({ configPath: './pulselog.config.json' });
           const total: number = result.total;
@@ -176,6 +177,10 @@ jobs:
 
           await runDigest({ configPath: './pulselog.config.json' });
           await runBackup({ configPath: './pulselog.config.json' });
+          const t = testAlert({ configPath: './pulselog.config.json', mode: 'digest' });
+          const ok: boolean = t.ok;
+          const lines: string[] = t.lines;
+          if (!ok) console.error(lines.join('\n'));
           console.log(Object.keys(CHECKS).length);
           TS
           # Native-addon repos: this install BUILDS the addon (better-sqlite3 &c) in
