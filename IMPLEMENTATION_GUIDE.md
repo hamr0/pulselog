@@ -38,12 +38,12 @@ the other, and nothing in this guide is load-bearing across the two.
 | `<MAIL_HOST>` | HELO / rDNS name for mail | `mail.myapp.com` |
 | `<DKIM_SELECTOR>` | OpenDKIM selector | `myapp2026` |
 | `<OPERATOR_EMAIL>` | where alerts land | `you@gmail.com` |
-| `<USER>` | human login user on the **backup host** (Part B §B6) | `alice` |
+| `<USER>` | human login user on the **backup host** (Part B §B7) | `alice` |
 
-**Order of work (full duo deploy):** Part B §B1 (mail — first, always) →
-Part A (flightlog in-app) → Part B §B2 (your stats command) → §B3–B5 (pulselog
-+ timers on the VPS) → §B6 (backup host, optional but recommended). §B7 verifies
-each piece; §B8 is for when it breaks. **Doing only one tool? Just read its Part.**
+**Order of work (full duo deploy):** Part B §B2 (mail — first, always) →
+Part A (flightlog in-app) → Part B §B3 (your stats command) → §B4–B6 (pulselog
+health + digest + systemd timers on the VPS) → §B7 (backup host, optional but
+recommended). §B8 verifies each piece; §B9 is for when it breaks. **Doing only one tool? Just read its Part.**
 
 > **Log-path note:** this doc writes `/var/log/maillog` (Fedora/RHEL). On
 > Debian/Ubuntu use `/var/log/mail.log`; on journald-only systems use
@@ -140,7 +140,7 @@ per-proc file) under `<DATA_DIR>`.
 ## A3. The `where` grouping key
 
 **The `where` field is your grouping key** for any "≥N of the same error"
-rollup (e.g. pulselog's digest, §B4 — optional). Give each call site a stable,
+rollup (e.g. pulselog's digest, §B5 — optional). Give each call site a stable,
 low-cardinality `where` (e.g. `checkout`, `sweep-cleanup`) — **not** the error
 message.
 
@@ -166,17 +166,17 @@ node -e "import('flightlog').then(f=>{const {captureSync}=f.install({file:'/tmp/
 > **★ Better together.** If you also run pulselog, its weekly digest can roll these
 > errors up into a "≥N of the same error this week" report — **counts + group names
 > only, never messages or stacks**. Point the digest's `flightlog` block at this
-> `errors.jsonl` (Part B §B4). Nothing else in flightlog changes.
+> `errors.jsonl` (Part B §B5). Nothing else in flightlog changes.
 
 ---
 
 # Part B — pulselog: health, digest, backup, off-box watch
 
 **Standalone.** Everything in Part B works with pulselog alone. The one place
-flightlog can enter — the digest error rollup (§B4) — is explicitly optional; omit
+flightlog can enter — the digest error rollup (§B5) — is explicitly optional; omit
 its `flightlog` block and pulselog behaves identically.
 
-> **Do mail deliverability (§B1) FIRST.** pulselog can be flawless and you'll still
+> **Do mail deliverability (§B2) FIRST.** pulselog can be flawless and you'll still
 > get *nothing* if the box can't hand mail to the recipient.
 
 ## B1. Prerequisites
@@ -191,10 +191,11 @@ its `flightlog` block and pulselog behaves identically.
   ```
 - **A mailer.** pulselog sends via `sendmail`. Have a working MTA (Postfix +
   OpenDKIM) **or** a `sendmail` shim (`msmtp` + `msmtp-mta`). See §B2 — this is the
-  step everyone skips and then silently loses every alert.
+  step everyone skips and then silently loses every alert. Note that a sandboxed
+  systemd unit can break `sendmail` even when the MTA is healthy (see §B6/§B9).
 - **A dedicated service user** (`<APP_USER>`) the app + timers run as. Keep it
-  unprivileged: it will NOT be able to read `/var/log/maillog` (that matters in §B6
-  and §B8).
+  unprivileged: it will NOT be able to read `/var/log/maillog` (that matters in §B7a
+  and §B9).
 
 ## B2. ⚠️ Mail deliverability FIRST — SPF, DKIM, PTR
 
@@ -407,9 +408,13 @@ Group=<APP_USER>
 WorkingDirectory=<APP_DIR>
 EnvironmentFile=/etc/<APP>/env       # so stats.js sees DB_PATH/DATA_DIR
 ExecStart=/usr/bin/node <APP_DIR>/node_modules/pulselog/bin/pulselog.js --digest --config <APP_DIR>/pulselog.config.json
+# NoNewPrivileges=true disables postdrop's setgid-postdrop bit; without the
+# supplementary group sendmail can't write maildrop/ and postdrop loops on Permission denied.
+# ProtectHome=read-only (not true): an msmtp fallback reads ~/.msmtprc.
 NoNewPrivileges=true
+SupplementaryGroups=postdrop
 ProtectSystem=true
-ProtectHome=true
+ProtectHome=read-only
 PrivateTmp=true
 Nice=10
 ```
@@ -424,6 +429,14 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 ```
+
+> **Hardened units that send mail (digest, and health/backup if you add the same
+> sandbox):** the three lines above apply to **any** pulselog unit with
+> `NoNewPrivileges=true` — keep it, add `SupplementaryGroups=postdrop`, and use
+> `ProtectHome=read-only`. With `ProtectSystem=strict` you additionally need
+> `ReadWritePaths=/var/spool/postfix/maildrop` (plus your own history/backup paths).
+> Without them the mail silently never leaves the box (§B9). Applied example: addypin's
+> `ops/systemd/addypin-stats-digest.service`.
 
 Enable:
 ```bash
@@ -540,14 +553,32 @@ ExecStart=/usr/local/bin/pulselog --backup --config /etc/<APP>/pulselog.config.j
 
 ## B8. Verify
 
-```bash
-# health: exit 0 + silent when green
-node <APP_DIR>/node_modules/pulselog/bin/pulselog.js --config <APP_DIR>/pulselog.config.json; echo "exit=$?"
+Verify through the **real unit**, not by running `node …/pulselog.js` by hand. A hand
+run (often as root) bypasses the unit's sandbox, which is exactly how a broken
+`NoNewPrivileges` setup passes validation and then never delivers (§B9).
 
-# digest: render without sending
+```bash
+# digest: render without sending (safe anywhere; sends and writes nothing)
 node <APP_DIR>/node_modules/pulselog/bin/pulselog.js --digest --dry-run --config <APP_DIR>/pulselog.config.json
 
-# mail: real send (§B2e) → want status=sent
+# digest, for real: run the actual unit, then confirm the MTA sent it
+sudo systemctl start <APP>-stats-digest.service
+grep '<OPERATOR_EMAIL>' /var/log/maillog | tail          # want status=sent
+tail -n 2 <HISTORY_FILE>                                 # want the kind:"delivery" line: status:"ok"
+```
+
+A manual digest run appends an **extra mid-week row** to `stats.jsonl`. To avoid that,
+prefer `pulselog --test-alert` (add `--digest`/`--backup` for those blocks) run from a
+**test unit with the same sandbox directives** as the real one (copy the unit, swap
+`ExecStart` to `… pulselog.js --test-alert --digest --config …`, `systemctl start` it):
+it sends one test message through the primary email and the fallback, prints each
+result, writes no JSONL, and exits 1 if any configured path fails.
+
+```bash
+# health: exit 0 + silent when green (exit 1 only if an alert was attempted and every path failed)
+sudo systemctl start <APP>-health.service; systemctl status <APP>-health.service
+
+# mail: real send (§B2e) → want status=sent. Exit 0 from sendmail = queued, not delivered.
 # timers: are they actually scheduled?
 systemctl list-timers '<APP>-*'
 
@@ -560,6 +591,7 @@ ls -la ~/<APP>-backups/*.tar.gz
 
 | Symptom | Likely cause | Check / fix |
 |---|---|---|
+| Digest/alerts never arrive; the timer ran, `stats.jsonl` gains a row weekly, **no bounce** in maillog | **Unit sandbox blocks `postdrop`** (`NoNewPrivileges=true` disables its setgid bit) | `grep postdrop /var/log/maillog` shows `mail_queue_enter: create file maildrop/…: Permission denied`; `pgrep -a postdrop` shows a stuck process; from 0.8.0 the `kind:"delivery"` line shows `emailed … reason:"timeout"` and the unit exits failed. Fix: the §B6 lines (`SupplementaryGroups=postdrop`, `ProtectHome=read-only`) + `systemctl daemon-reload`. Fallback users: `ls -l ~/.msmtprc` as the service user giving permission denied under `ProtectHome=true` → `read-only` |
 | Digest/alerts never arrive, but timers ran | **Mail bounces at recipient** | `grep '<OPERATOR_EMAIL>' /var/log/maillog \| grep bounced` → fix §B2 |
 | Bounce `5.7.25` | PTR missing or forward≠reverse (often a **proxied mail host**) | §B2a; `dig A <MAIL_HOST>` must be `<VPS_IP>`, not a CDN IP |
 | Bounce `5.7.26` | SPF and DKIM both fail | §B2b/B2c; `dig TXT <DKIM_SELECTOR>._domainkey.<DOMAIN>` must be non-empty |
@@ -567,7 +599,7 @@ ls -la ~/<APP>-backups/*.tar.gz
 | `pulselog.js: not found` on the VPS | `npm ci --omit=dev` skipped it | pulselog must be in **`dependencies`**, not `devDependencies` |
 | pulselog refuses the config | 0.4.x **config-ownership gate** | config must be owned by the running user **or root**, and not group/world-writable |
 | Digest metric shows `null` | metric command failed / DB missing | run the `metricsCommand` by hand; it must print flat JSON and exit 0 |
-| Can't find last week's run in `journalctl` | journal rotated | the durable record is the JSONL (`stats.jsonl` / `health.jsonl`), not the journal |
+| Can't find last week's run in `journalctl` | journal rotated | the durable record is the JSONL (`stats.jsonl` / `health.jsonl`), not the journal. For the digest, read the **`kind:"delivery"` line** (did the send succeed?), not just the `stats` snapshot (which only proves the metrics ran) |
 | On-VPS mail-bounce check false-alarms | runs as `<APP_USER>` (can't read maillog) + circular | move it **off-box** (§B7a) — don't grant the service user log access |
 
 ## B10. Security & privacy (pulselog)
@@ -578,8 +610,11 @@ ls -la ~/<APP>-backups/*.tar.gz
   `0644 root` or owned by the running user.
 - **Alert/digest mail is plain `sendmail`, unsigned by pulselog itself.**
   Deliverability rides entirely on your MTA (§B2). Keep a **secondary signal** so a
-  spam-foldered alert isn't your only notice: the JSONL lines, the off-box
-  `file-age` dead-man's-switch (§B7), and the opt-in `alert.fallback` sink.
+  spam-foldered alert isn't your only notice: the JSONL lines (for the digest, the
+  `kind:"delivery"` line, not just the `stats` snapshot), the off-box `file-age`
+  dead-man's-switch (§B7), and the opt-in `alert.fallback` sink. An
+  `on-primary-failure` fallback fires on a hung send only because of `mailTimeoutMs`
+  (0.8.0+, default 30s); `mail`/`sendmail` exit 0 means queued, not delivered.
 - **Error messages/stacks never leave the box** via the digest — only counts +
   group names. Don't defeat this by putting PII in the flightlog `where`/`name`.
 - pulselog writes JSONL `0600`. Back up `stats.jsonl` if you want history to survive

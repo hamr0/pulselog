@@ -244,7 +244,7 @@ test('run: retries a flaky check and records green when it recovers', async (t) 
     checks: [{ type: 'command', name: 'flaky', command: script, retries: 2, retryDelayMs: 0 }],
   }));
   const res = await run({ configPath: cfgPath });
-  assert.deepEqual(res, { total: 1, failures: 0 }, 'recovered on retry → no failure');
+  assert.deepEqual(res, { total: 1, failures: 0, deliveryFailed: false }, 'recovered on retry → no failure');
   assert.equal(existsSync(out), false, 'silent on green');
 });
 
@@ -258,7 +258,7 @@ test('run: a check failing every attempt is recorded ONCE, noting the attempts',
     checks: [{ type: 'command', name: 'down', command: script, retries: 1, retryDelayMs: 0 }],
   }));
   const res = await run({ configPath: cfgPath });
-  assert.deepEqual(res, { total: 1, failures: 1 });
+  assert.deepEqual(res, { total: 1, failures: 1, deliveryFailed: false });
   const recs = readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.equal(recs.length, 1, 'one failure line despite retries — not one per attempt');
   assert.match(recs[0].message, /after 2 attempts/);
@@ -274,7 +274,7 @@ test('run: default is no retry (one attempt, no annotation)', async (t) => {
     checks: [{ type: 'command', name: 'once', command: script }],
   }));
   const res = await run({ configPath: cfgPath });
-  assert.deepEqual(res, { total: 1, failures: 1 }, 'no retry by default → fails on first attempt');
+  assert.deepEqual(res, { total: 1, failures: 1, deliveryFailed: false }, 'no retry by default → fails on first attempt');
   const recs = readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   assert.doesNotMatch(recs[0].message, /attempts/, 'no retry annotation when retries=0');
 });
@@ -291,7 +291,7 @@ test('run: a non-integer/negative retries is coerced (no loop-bound warp or cras
     checks: [{ type: 'command', name: 'str', command: script, retries: '2', retryDelayMs: 0 }],
   }));
   const res = await run({ configPath: cfgPath });
-  assert.deepEqual(res, { total: 1, failures: 1 });
+  assert.deepEqual(res, { total: 1, failures: 1, deliveryFailed: false });
   assert.match(JSON.parse(readFileSync(out, 'utf8').trim()).message, /after 3 attempts/,
     'string "2" → 2 retries → 3 attempts, not 21');
 
@@ -303,7 +303,7 @@ test('run: a non-integer/negative retries is coerced (no loop-bound warp or cras
     checks: [{ type: 'command', name: 'neg', command: flakyScript(dir, 'neg', 99), retries: -5 }],
   }));
   const res2 = await run({ configPath: cfg2 });
-  assert.deepEqual(res2, { total: 1, failures: 1 }, 'negative retries does not crash the run');
+  assert.deepEqual(res2, { total: 1, failures: 1, deliveryFailed: false }, 'negative retries does not crash the run');
   assert.doesNotMatch(JSON.parse(readFileSync(out2, 'utf8').trim()).message, /attempts/);
 });
 
@@ -318,7 +318,7 @@ test('run: config.retry default applies when a check omits its own', async (t) =
     checks: [{ type: 'command', name: 'g', command: script }],
   }));
   const res = await run({ configPath: cfgPath });
-  assert.deepEqual(res, { total: 1, failures: 0 }, 'global retry default recovers the flaky check');
+  assert.deepEqual(res, { total: 1, failures: 0, deliveryFailed: false }, 'global retry default recovers the flaky check');
 });
 
 test('run: silent on green (no file written), records each failure on red', async (t) => {
@@ -334,7 +334,7 @@ test('run: silent on green (no file written), records each failure on red', asyn
       checks: [{ type: 'http', name: 'api', url: okSrv.url }],
     }));
     const res = await run({ configPath: cfgPath });
-    assert.deepEqual(res, { total: 1, failures: 0 });
+    assert.deepEqual(res, { total: 1, failures: 0, deliveryFailed: false });
     assert.equal(existsSync(out), false, 'silent on green — no JSONL file');
   } finally {
     okSrv.close();
@@ -351,7 +351,7 @@ test('run: silent on green (no file written), records each failure on red', asyn
       ],
     }));
     const res = await run({ configPath: cfgPath });
-    assert.deepEqual(res, { total: 1, failures: 1 }, 'disabled check is skipped');
+    assert.deepEqual(res, { total: 1, failures: 1, deliveryFailed: false }, 'disabled check is skipped');
     const recs = readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     assert.equal(recs.length, 1);
     assert.equal(recs[0].kind, 'health');       // flightlog-compatible core shape

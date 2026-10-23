@@ -40,7 +40,10 @@ one JSONL dialect — composed at read time, each writer its own file.
 - **The JSONL is the interface.** No UI, no server, no dashboard, no metrics DB ships.
 - **Silent on green.** Health writes nothing and mails nothing when all checks pass —
   the alert is the only signal. Exit `0` on a normal run (so cron stays quiet); exit
-  `1` only when the run itself can't proceed (bad/missing config).
+  `1` only when the run itself can't proceed (bad/missing config) — plus one approved
+  exception (0.8.0): exit `1` when an alert/digest send was attempted and every
+  delivery path failed (nothing else would signal; the addypin digest silently never
+  arrived for ~3 months). Green runs, flat-week skips and "nothing configured" stay `0`.
 - **Privacy is the spine.** A metric stores **only the integer its command returns**
   (the `count(distinct …)` stays in the adopter's query). The flightlog digest
   enrichment surfaces **error names + counts only — never messages or stacks** (those
@@ -79,7 +82,8 @@ message/stack leak must make it fail. Keep it that way.
 
 `CLAUDE.md`, `docs/`, `.github/`, `.claude/` are repo-only — excluded from the
 `package.json` `files` allowlist. The tarball ships `src/` + `types/` + the doc set
-(`README.md`, `pulselog.context.md`, `CHANGELOG.md`) + `config.example.json` + `bin/`.
+(`README.md`, `pulselog.context.md`, `IMPLEMENTATION_GUIDE.md`, `CHANGELOG.md`) +
+`config.example.json` + `bin/`.
 
 <!-- MEMORY:START -->
 @.claude/remember/MEMORY.md
@@ -88,5 +92,5 @@ message/stack leak must make it fail. Keep it that way.
 <!-- AGENT_RULES:START -->
 Consult when building something new or adding a feature — a standards guide, not hot
 context like MEMORY.md above:
-@.claude/remember/AGENT_RULES.md
+.claude/remember/AGENT_RULES.md
 <!-- AGENT_RULES:END -->

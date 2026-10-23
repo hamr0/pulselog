@@ -70,6 +70,32 @@ test('dispatchAlert: when=always fires even when the primary succeeds', (t) => {
   assert.equal(existsSync(sink.fired), true, 'always → fires regardless');
 });
 
+// 0.8.0 — the addypin incident: the MTA handoff HANGS (postdrop looping on EACCES) instead
+// of failing. Without a primary timeout, dispatchAlert never returns and the fallback never
+// fires. A hung handoff must count as a failed primary.
+function hangingMail(dir) {
+  writeFileSync(join(dir, 'mail'), '#!/bin/sh\ncat >/dev/null\nsleep 30 &\nwait\n');
+  chmodSync(join(dir, 'mail'), 0o755);
+}
+test('dispatchAlert: a HUNG primary times out → on-primary-failure fires, reason recorded', (t) => {
+  const dir = tmp(t); const sink = fbSink(dir); hangingMail(dir); shadowPath(t, dir);
+  const fb = normalizeFallback({ command: sink.command, when: 'on-primary-failure' });
+  const start = Date.now();
+  const out = dispatchAlert({ email: 'ops@x', subject: 'S', body: 'B', fb, timeoutMs: 300 });
+  assert.ok(Date.now() - start < 5000, 'returned promptly instead of blocking on the hung handoff');
+  assert.deepEqual(out.emailed, { transport: 'mail', ok: false, reason: 'timeout' });
+  assert.equal(existsSync(sink.fired), true, 'fallback fired after the primary timed out');
+  assert.equal(out.fallback.ok, true);
+  assert.equal(out.fallback.reason, null);
+});
+test('dispatchAlert: primary + fallback failure reasons are both surfaced', (t) => {
+  const dir = tmp(t); fakeMail(dir, 75); shadowPath(t, dir);
+  const fb = normalizeFallback({ command: 'sh', args: ['-c', 'exit 3'], when: 'on-primary-failure' });
+  const out = dispatchAlert({ email: 'ops@x', subject: 'S', body: 'B', fb });
+  assert.equal(out.emailed.reason, 'exit 75');
+  assert.equal(out.fallback.reason, 'exit 3');
+});
+
 // ── fallback-only (no MTA), payload wiring, privacy pass-through ─────────────────────────
 test('dispatchAlert: fallback-only (no email) delivers, body→stdin & PULSELOG_SUBJECT set', (t) => {
   const dir = tmp(t); const sink = fbSink(dir);
@@ -103,7 +129,7 @@ test('run: a failing check with alert.fallback fires the sink and records the at
     alert: { app: 'myapp', fallback: { command: sink.command, when: 'always' } }, // fallback-only, no MTA
   }));
   const res = await run({ configPath: cfgPath });
-  assert.deepEqual(res, { total: 1, failures: 1 });
+  assert.deepEqual(res, { total: 1, failures: 1, deliveryFailed: false });
   assert.equal(existsSync(sink.fired), true, 'fallback fired end-to-end');
   const recs = readFileSync(out, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   const alert = recs.find((r) => r.kind === 'alert');

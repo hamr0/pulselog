@@ -12,7 +12,7 @@ import {
 import { spawnSync } from 'node:child_process';
 import { join, basename } from 'node:path';
 import { createSink } from './sink.js';
-import { normalizeFallback, dispatchAlert } from './fallback.js';
+import { normalizeFallback, dispatchAlert, deliveryRecord } from './fallback.js';
 import { dumpDb, dbDest } from './dumpers.js';
 
 const DAY_MS = 86_400_000;
@@ -160,12 +160,15 @@ export async function runBackup({ configPath, now = Date.now() }) {
   } catch (err) {
     // Record + alert the failure, then rethrow so the CLI exits 1 (D15). Alert via email
     // and/or the fallback sink; fold the fallback outcome into the same fail record (D5).
-    let fallback = null;
+    let delivery = null;
     try {
-      ({ fallback } = dispatchAlert({ email: b.email, from: b.from, subject: `[${app}] backup FAILED — ${b.name}`, body: `${err.message}\n`, fb }));
+      const out = dispatchAlert({ email: b.email, from: b.from, subject: `[${app}] backup FAILED — ${b.name}`, body: `${err.message}\n`, fb, timeoutMs: b.mailTimeoutMs });
+      if (out.emailed || out.fallback) {
+        const { emailed, fallback } = deliveryRecord(out);
+        delivery = { ...(emailed ? { emailed } : {}), ...(fallback ? { fallback } : {}) };
+      }
     } catch { /* never mask the real error */ }
-    const record = { ts, kind: 'backup', app, name: b.name, status: 'fail', message: err.message, skipped,
-      ...(fallback ? { fallback: { ok: fallback.ok, ...(fallback.err ? { err: fallback.err } : {}) } } : {}) };
+    const record = { ts, kind: 'backup', app, name: b.name, status: 'fail', message: err.message, skipped, ...delivery };
     if (b.history) { try { createSink({ file: b.history, maxBytes: 0 }).emit(record); } catch { /* never mask the real error */ } }
     throw err;
   } finally {

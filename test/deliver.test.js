@@ -62,3 +62,27 @@ test('spawnDelivery: input reaches the child stdin byte-exact; env merges', (t) 
   assert.equal(readFileSync(outBody, 'utf8'), BODY, 'stdin body arrives byte-exact');
   assert.equal(readFileSync(outSubj, 'utf8'), '[app] alert', 'env var reaches the child');
 });
+
+/** Synchronous sleep (the code under test is synchronous; keep the test so too). */
+const nap = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+
+// 0.8.0: the real incident — `mail` → `postdrop` grandchild looping on a permission
+// error. A timeout that kills only the direct child leaves the grandchild running.
+test('spawnDelivery: timeout kills the whole process group, not just the child', (t) => {
+  const dir = tmp(t);
+  const pidFile = join(dir, 'gc.pid');
+  const r = spawnDelivery('sh', ['-c', `sleep 30 & echo $! > "${pidFile}"; wait`], { timeoutMs: 300 });
+  assert.equal(r.killed, true);
+  assert.equal(r.reason, 'timeout');
+  const gc = Number(readFileSync(pidFile, 'utf8'));
+  t.after(() => { try { process.kill(gc, 'SIGKILL'); } catch { /* already gone */ } });
+  for (let i = 0; i < 20 && alive(gc); i++) nap(50);
+  assert.equal(alive(gc), false, `grandchild ${gc} must not survive the timeout`);
+});
+
+test('spawnDelivery: reason names the failure — exit N / errno / null on success', () => {
+  assert.equal(spawnDelivery('sh', ['-c', 'exit 0']).reason, null);
+  assert.equal(spawnDelivery('sh', ['-c', 'exit 75']).reason, 'exit 75');
+  assert.equal(spawnDelivery('no-such-binary-xyzzy').reason, 'ENOENT');
+});

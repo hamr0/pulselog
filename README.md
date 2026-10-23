@@ -55,6 +55,8 @@ Write a config (copy `config.example.json`), then run each mode on its own sched
 0 2 * * *    cd /opt/myapp && npx pulselog --backup --config ./backup.config.json
 ```
 
+**Prove delivery works:** `npx pulselog --test-alert --config ./pulselog.config.json` (add `--digest` or `--backup` to test that block) sends one test message through the primary email *and* the fallback, prints each result, writes no JSONL, and exits `1` if any configured path fails. Run it under the **real systemd unit's sandbox**, not by hand as root — a hardened unit can silently break `sendmail` even when the MTA is healthy (see the *Running under systemd hardening* gotcha in the [integration guide](pulselog.context.md)). `mail`/`sendmail` exit 0 means *queued*, not delivered.
+
 **Health checks** — turn on only what you need (`enabled: false` switches one off):
 
 | type | passes when | key fields (defaults) |
@@ -148,7 +150,7 @@ Compose at read time — one timeline across errors, health, stats, and backups:
 jq -s 'sort_by(.ts)' errors.jsonl health.jsonl stats.jsonl backup.jsonl
 ```
 
-JSONL files are created `0600` (owner-only) so data isn't world-readable on a shared host. **Exit codes:** `0` when a run completed (failures are emailed + logged — the alert is the signal, so cron stays quiet); `1` only when the run itself couldn't proceed (missing/invalid config), so a misconfiguration surfaces loudly.
+JSONL files are created `0600` (owner-only) so data isn't world-readable on a shared host. **Exit codes:** `0` when a run completed (failures are emailed + logged — the alert is the signal, so cron stays quiet); `1` when the run itself couldn't proceed (missing/invalid config), a backup failed, or (0.8.0) a health/digest send was attempted and *every* delivery path failed — so a dead alert path surfaces in `systemctl --failed` instead of vanishing. Green runs still exit `0` and send nothing.
 
 67 tests pass on CI (Node 22) — health checks (live local HTTP server, tmp files), digest (metric parse, batch `metricsCommand`, ISO-week WoW, the flightlog 7-day rollup, render, and a **mutation-tested privacy invariant**: an error's message/stack must never reach the history line or the email), and backup (staging, atomic publish, retention, and the security regressions). Ships TypeScript types generated from JSDoc — `import { run, runDigest } from "pulselog"` gives autocomplete out of the box.
 
