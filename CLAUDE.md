@@ -22,6 +22,9 @@ to them.
 - **[`docs/product/2026-05-31-prd.md`](docs/product/2026-05-31-prd.md)** — the
   PRD: locked decisions + *why*, success criteria, the Go/No-Go gate, §13 validation.
   The durable reasoning that doesn't belong in the adopter-facing docs lives here.
+  It is **one PRD** split into a core page plus `docs/wiki/` sections (listed at its
+  end). A new feature's decision section (§17 onward) gets its own
+  `docs/wiki/<feature>-decisions.md` plus a row in that list, never a second PRD.
 
 ## What pulselog is
 
