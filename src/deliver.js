@@ -12,7 +12,9 @@
 // helper stays a thin, honest wrapper rather than swallowing programmer errors silently.
 //
 // 0.8.0: the child is spawned `detached` (its own process group) and, on a timeout, the
-// whole group is SIGKILLed. spawnSync's own timeout signals only the direct child — but
+// whole group is SIGKILLed (the direct child too: `killSignal` is SIGKILL, since the default
+// SIGTERM can be ignored and would leave spawnSync blocked until the child exits). spawnSync's
+// own timeout signals only the direct child — but
 // `mail`/`sendmail` hand off to a `postdrop` grandchild, which in the addypin incident kept
 // retrying forever after its parent was gone. Killing `-pid` takes the grandchild with it.
 // Limitation: Node can't run a signal handler while spawnSync blocks, so if pulselog itself
@@ -40,6 +42,7 @@ export function spawnDelivery(command, args = [], { input = '', env, timeoutMs }
     input,
     env: env ? { ...process.env, ...env } : process.env,
     timeout: timeoutMs || undefined,
+    killSignal: 'SIGKILL', // default SIGTERM can be ignored, leaving spawnSync blocked past the timeout
     windowsHide: true,
     encoding: 'utf8',
     detached: true, // own process group, so a timeout can kill grandchildren too
@@ -48,7 +51,7 @@ export function spawnDelivery(command, args = [], { input = '', env, timeoutMs }
   // A child that exits without reading stdin makes spawnSync report EPIPE even though it ran
   // and exited — judge it by its exit status, not by the unread pipe.
   if (e && e.code === 'EPIPE' && typeof r.status === 'number') e = undefined;
-  const killed = Boolean(e && (e.code === 'ETIMEDOUT' || r.signal === 'SIGTERM'));
+  const killed = Boolean(e && e.code === 'ETIMEDOUT');
   if (killed && r.pid) {
     try { process.kill(-r.pid, 'SIGKILL'); } catch { /* group already gone */ }
   }

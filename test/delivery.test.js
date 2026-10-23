@@ -46,8 +46,10 @@ const cli = (dir, args) => spawnSync(process.execPath, [BIN, ...args], {
 });
 const FAIL_FB = { command: 'sh', args: ['-c', 'exit 3'], when: 'on-primary-failure' };
 const OK_FB = { command: 'sh', args: ['-c', 'cat >/dev/null'], when: 'on-primary-failure' };
-const digestCfg = (dir, fallback) => ({ digest: {
-  app: 'demo', history: join(dir, 'stats.jsonl'), email: 'ops@x', mailTimeoutMs: 300,
+// mailTimeoutMs only where a hang is intended (HANG_MS); a fake mail that should finish gets the 30s default.
+const HANG_MS = 300;
+const digestCfg = (dir, fallback, mailTimeoutMs) => ({ digest: {
+  app: 'demo', history: join(dir, 'stats.jsonl'), email: 'ops@x', mailTimeoutMs,
   metrics: [{ name: 'users', command: 'echo', args: ['42'] }], fallback,
 } });
 
@@ -65,7 +67,7 @@ test('loadWeeks: a later kind:"delivery" row does not replace the week\'s stats 
 // ── digest: durable delivery record + honest result ─────────────────────────────────────
 test('digest: hung primary + failing fallback → durable fail record with both reasons', (t) => {
   const dir = tmp(t); fakeMail(dir, 'hang'); shadowPath(t, dir);
-  const res = runDigest({ configPath: writeCfg(dir, digestCfg(dir, FAIL_FB)), now: ANCHOR });
+  const res = runDigest({ configPath: writeCfg(dir, digestCfg(dir, FAIL_FB, HANG_MS)), now: ANCHOR });
   assert.equal(res.deliveryFailed, true);
   assert.equal(res.delivered, 'mail:fail(timeout), fallback:fail(exit 3)');
   const [snap, rec] = lines(join(dir, 'stats.jsonl'));
@@ -111,14 +113,14 @@ test('CLI digest: no email + no fallback stays exit 0 (nothing was attempted)', 
 });
 
 // ── health: same rule, reasons in the D5 record ──────────────────────────────────────────
-const healthCfg = (dir, fallback) => ({
+const healthCfg = (dir, fallback, mailTimeoutMs) => ({
   output: { file: join(dir, 'health.jsonl'), maxBytes: 0 },
   checks: [{ type: 'command', name: 'svc', command: 'false' }],
-  alert: { app: 'demo', email: 'ops@x', mailTimeoutMs: 300, fallback },
+  alert: { app: 'demo', email: 'ops@x', mailTimeoutMs, fallback },
 });
 test('health: hung primary + failing fallback → deliveryFailed, reasons in the alert record', async (t) => {
   const dir = tmp(t); fakeMail(dir, 'hang'); shadowPath(t, dir);
-  const res = await run({ configPath: writeCfg(dir, healthCfg(dir, FAIL_FB)) });
+  const res = await run({ configPath: writeCfg(dir, healthCfg(dir, FAIL_FB, HANG_MS)) });
   assert.deepEqual(res, { total: 1, failures: 1, deliveryFailed: true });
   const alert = lines(join(dir, 'health.jsonl')).find((r) => r.kind === 'alert');
   assert.equal(alert.status, 'fail');
@@ -138,7 +140,7 @@ test('backup: a failed run records emailed + fallback with reasons', async (t) =
   const dir = tmp(t); fakeMail(dir, 'hang'); shadowPath(t, dir);
   const history = join(dir, 'backup.jsonl');
   const cfg = writeCfg(dir, { backup: {
-    app: 'demo', name: 'b', dir: join(dir, 'out'), history, email: 'ops@x', mailTimeoutMs: 300, keepLast: 3,
+    app: 'demo', name: 'b', dir: join(dir, 'out'), history, email: 'ops@x', mailTimeoutMs: HANG_MS, keepLast: 3,
     include: [{ path: join(dir, 'missing') }], fallback: FAIL_FB,
   } });
   await assert.rejects(runBackup({ configPath: cfg }), /required include path missing/);
@@ -175,7 +177,7 @@ test('CLI --test-alert: both paths ok → exit 0, each path printed, fallback fi
 test('CLI --test-alert: hung primary → exit 1, "primary: fail (timeout)", fallback still ok', (t) => {
   const dir = tmp(t); fakeMail(dir, 'hang');
   const { fb } = recFb(dir, 'always');
-  const r = cli(dir, ['--test-alert', '--config', writeCfg(dir, testCfg(dir, 'health', { email: 'ops@x', mailTimeoutMs: 300, fallback: fb }))]);
+  const r = cli(dir, ['--test-alert', '--config', writeCfg(dir, testCfg(dir, 'health', { email: 'ops@x', mailTimeoutMs: HANG_MS, fallback: fb }))]);
   assert.equal(r.status, 1);
   assert.match(r.stdout, /primary: fail \(timeout\)/);
   assert.match(r.stdout, /fallback: ok/);

@@ -201,7 +201,7 @@ email) is built in. You never write a `stats.js` again.
 | `mailTimeoutMs` | `30000` | Cap on the `mail`/`sendmail` handoff (0.8.0). Past it the send is killed and counts as a **failed primary** (reason `timeout`). Not `timeoutMs` — see "Email transport". |
 | `weeks` | `4` | How many weeks the table shows. |
 | `skipIfFlat` | `false` | `true` → skip the email when every metric is unchanged vs last week **and** nothing is flagged. |
-| `metrics[]` | — | `{ name, command?, args?, timeoutMs? }`. A metric with its own `command` prints **one integer**; anything else records `null` for that metric (noted, never fatal). Run **without a shell** (`command` + `args` array, like the health `command` check) — for a pipe/shell metric, use `"command": "sh", "args": ["-c", "… | …"]`. A metric with **no** `command` is filled by name from `metricsCommand` (below). |
+| `metrics[]` | — | `{ name, command?, args?, timeoutMs? }`. A metric with its own `command` prints **one integer**; anything else records `null` for that metric (noted, never fatal). Run **without a shell** (`command` + `args` array, like the health `command` check) — for a pipe/shell metric, use `"command": "sh", "args": ["-c", "… | …"]`. A metric with **no** `command` is filled by name from `metricsCommand` (below). **Reserved names:** `ts`, `kind`, `app`, `errors`, `week` collide with snapshot fields and fail config load (exit `1`) — pick another name. |
 | `metricsCommand` | — | Optional. `{ command, args?, timeoutMs? }` — one command that prints a **flat JSON object of named integers** in a single pass; each `metrics[]` entry without its own `command` takes its value by `name` from that object. See "Batch metrics" below. |
 | `flightlog` | — | Optional. `{ file, groupBy?, flagAtLeast? }` — see below. |
 
@@ -224,7 +224,8 @@ appends a second line to the same `history` file recording what happened to the 
 configured). `reason` is `timeout`, `exit N`, an errno such as `ENOENT`, or `no-mta`.
 `ok` means *handed off / queued*, not delivered. The week-over-week reader ignores every
 non-`stats` row (legacy rows with no `kind` still count), so the extra line never
-disturbs the table. **Check this line, not just the snapshot** — a normal-looking
+disturbs the table. **It is written only when `history` is set** — without `history` there
+is no durable delivery trail, and the signal is the exit code plus the stderr result line. **Check this line, not just the snapshot** — a normal-looking
 `stats` row proves the metrics ran, not that the mail left the box.
 
 **The email** (rendered from `history`):
@@ -427,7 +428,8 @@ primary** with reason `timeout`, so a fallback with `when: "on-primary-failure"`
 (before 0.8.0 a hung `sendmail` blocked forever and the fallback never ran). It is
 deliberately **not** `timeoutMs`: `backup.timeoutMs` already bounds the backup command.
 Every delivery child (`mail`, `sendmail`, the fallback) runs in its own process group and
-the **whole group** is killed on timeout, so a looping `postdrop` grandchild dies too.
+the **whole group** is SIGKILLed on timeout (the direct child too — SIGKILL, not SIGTERM,
+so a child that ignores TERM can't outlive the timeout), so a looping `postdrop` grandchild dies too.
 
 - **Race:** a slow handoff that queues just before the timeout is also retried via the
   fallback, so you can get a duplicate. A duplicate beats silence.
@@ -556,6 +558,7 @@ fallback: not configured
 ```
 
 Exits `1` if any configured path fails, or if nothing is configured. Writes no JSONL.
+Passing **both** `--digest` and `--backup` is a usage error (exit `1`, nothing sent).
 **Run it under the real unit's sandbox** (`systemctl start` a throwaway unit with the same
 hardening directives), never by hand as root: root bypasses `NoNewPrivileges`,
 `ProtectHome` and friends, which is exactly how the failure below went undetected. `ok`

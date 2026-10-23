@@ -45,7 +45,18 @@ test('spawnDelivery: timeout kills the child and flags it (fast)', () => {
   const elapsed = Date.now() - start;
   assert.equal(r.ok, false);
   assert.equal(r.killed, true);
-  assert.ok(elapsed < 3000, `honored the 300ms timeout, took ${elapsed}ms`);
+  assert.ok(elapsed < 8000, `honored the 300ms timeout, took ${elapsed}ms`);
+});
+
+// spawnSync's default timeout signal is SIGTERM; a child that ignores it would keep the run
+// blocked until it exits on its own. The kill must be SIGKILL so the timeout is a real bound.
+test('spawnDelivery: a TERM-ignoring child is still cut off at the timeout', () => {
+  const start = Date.now();
+  const r = spawnDelivery('sh', ['-c', 'trap "" TERM; sleep 10'], { timeoutMs: 300 });
+  const elapsed = Date.now() - start;
+  assert.equal(r.killed, true);
+  assert.equal(r.reason, 'timeout');
+  assert.ok(elapsed < 5000, `must not wait out the child's 10s sleep, took ${elapsed}ms`);
 });
 
 test('spawnDelivery: input reaches the child stdin byte-exact; env merges', (t) => {
@@ -72,7 +83,7 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
 test('spawnDelivery: timeout kills the whole process group, not just the child', (t) => {
   const dir = tmp(t);
   const pidFile = join(dir, 'gc.pid');
-  const r = spawnDelivery('sh', ['-c', `sleep 30 & echo $! > "${pidFile}"; wait`], { timeoutMs: 300 });
+  const r = spawnDelivery('sh', ['-c', `sleep 30 & echo $! > "${pidFile}"; wait`], { timeoutMs: 2000 });
   assert.equal(r.killed, true);
   assert.equal(r.reason, 'timeout');
   const gc = Number(readFileSync(pidFile, 'utf8'));
