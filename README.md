@@ -55,7 +55,7 @@ Write a config (copy `config.example.json`), then run each mode on its own sched
 0 2 * * *    cd /opt/myapp && npx pulselog --backup --config ./backup.config.json
 ```
 
-**Prove delivery works:** `npx pulselog --test-alert --config ./pulselog.config.json` (add `--digest` or `--backup` to test that block) sends one test message through the primary email *and* the fallback, prints each result, writes no JSONL, and exits `1` if any configured path fails. Run it under the **real systemd unit's sandbox**, not by hand as root — a hardened unit can silently break `sendmail` even when the MTA is healthy (see the *Running under systemd hardening* gotcha in the [integration guide](pulselog.context.md)). `mail`/`sendmail` exit 0 means *queued*, not delivered.
+**Prove delivery works:** `npx pulselog --test-alert --config ./pulselog.config.json` (add `--digest` or `--backup` to test that block) sends one test message through the primary email *and* the fallback, prints each result, writes no JSONL, and exits `1` if any configured path fails. It always sends for real, so `--dry-run` with it is a usage error (exit `1`, nothing sent). Run it under the **real systemd unit's sandbox**, not by hand as root — a hardened unit can silently break `sendmail` even when the MTA is healthy (see the *Running under systemd hardening* gotcha in the [integration guide](pulselog.context.md)). `mail`/`sendmail` exit 0 means *queued*, not delivered.
 
 **Health checks** — turn on only what you need (`enabled: false` switches one off):
 
