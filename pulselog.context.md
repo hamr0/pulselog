@@ -27,15 +27,17 @@ and the optional flightlog pairing — see the
 [Implementation Guide](IMPLEMENTATION_GUIDE.md) (Part B is pulselog; it ships in the
 package and needs no flightlog).
 
-> **Status:** `0.7.2` is published — all three modes (health + digest + **`backup`**)
-> are on npm, and `0.7.2` ships the deployment
+> **Status:** `0.8.0` is the current release — all three modes (health + digest + **`backup`**)
+> are on npm, and `0.7.2` shipped the deployment
 > **[Implementation Guide](IMPLEMENTATION_GUIDE.md)** in the package. `0.4.0` added a per-check `timeoutMs` and opt-in in-run `retries`, and a
 > security pass (config-perms gate, backup dir/umask tightening, per-engine password env,
 > name-escape guards). `0.4.1` refines the config-ownership gate to allow a **root-owned**
 > config (not just self-owned), matching `ssh`. `0.6.0` aligns the `command` check's
 > timeout reason with the others (`timeout after Ns`, not the misleading `exit 1
 > (timeout)`). `0.7.0` adds an opt-in **`alert.fallback`** sink (a second, out-of-band
-> delivery path so a dead MTA can't silence the tool). Defaults are unchanged.
+> delivery path so a dead MTA can't silence the tool). `0.8.0` adds delivery honesty: a
+> `mailTimeoutMs` cap on the mail handoff, a durable `kind:"delivery"` record, exit `1` when every
+> delivery path failed, and `--test-alert`. Defaults are unchanged otherwise.
 
 ## What pulselog is and is NOT
 
