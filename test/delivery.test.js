@@ -189,6 +189,16 @@ test('CLI --test-alert: failing fallback → exit 1 with its reason; primary-onl
   assert.equal(ok.status, 0, 'a missing fallback is not a failure');
   assert.match(ok.stdout, /fallback: not configured/);
 });
+test('CLI --test-alert: --digest and --backup together → usage error, exit 1, nothing sent', (t) => {
+  const dir = tmp(t); fakeMail(dir, 0);
+  const { fired, fb } = recFb(dir, 'always');
+  const cfg = writeCfg(dir, { ...testCfg(dir, 'digest', { email: 'ops@x', fallback: fb }), ...testCfg(dir, 'backup', { email: 'ops@x', fallback: fb }) });
+  const both = cli(dir, ['--test-alert', '--digest', '--backup', '--config', cfg]);
+  assert.equal(both.status, 1);
+  assert.match(both.stderr, /--test-alert takes one of --digest or --backup/);
+  assert.equal(existsSync(fired), false, 'neither path was exercised');
+  assert.equal(cli(dir, ['--test-alert', '--backup', '--config', cfg]).status, 0, 'one flag alone still works');
+});
 test('CLI --test-alert: fallback-only box works; neither path configured → exit 1', (t) => {
   const dir = tmp(t);
   const only = cli(dir, ['--test-alert', '--config', writeCfg(dir, testCfg(dir, 'health', { fallback: OK_FB }))]);

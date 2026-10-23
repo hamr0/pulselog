@@ -44,7 +44,10 @@ export function spawnDelivery(command, args = [], { input = '', env, timeoutMs }
     encoding: 'utf8',
     detached: true, // own process group, so a timeout can kill grandchildren too
   }));
-  const e = /** @type {NodeJS.ErrnoException | undefined} */ (r.error);
+  let e = /** @type {NodeJS.ErrnoException | undefined} */ (r.error);
+  // A child that exits without reading stdin makes spawnSync report EPIPE even though it ran
+  // and exited — judge it by its exit status, not by the unread pipe.
+  if (e && e.code === 'EPIPE' && typeof r.status === 'number') e = undefined;
   const killed = Boolean(e && (e.code === 'ETIMEDOUT' || r.signal === 'SIGTERM'));
   if (killed && r.pid) {
     try { process.kill(-r.pid, 'SIGKILL'); } catch { /* group already gone */ }

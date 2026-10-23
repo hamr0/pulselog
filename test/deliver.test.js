@@ -86,3 +86,17 @@ test('spawnDelivery: reason names the failure — exit N / errno / null on succe
   assert.equal(spawnDelivery('sh', ['-c', 'exit 75']).reason, 'exit 75');
   assert.equal(spawnDelivery('no-such-binary-xyzzy').reason, 'ENOENT');
 });
+
+// A child that exits without draining stdin makes spawnSync report EPIPE even though it ran
+// and exited. ~200KB overflows the pipe buffer, so the EPIPE is deterministic, not a race.
+const BIG = 'x'.repeat(200_000);
+
+test('spawnDelivery: exit 0 without reading a large stdin → ok, not EPIPE', () => {
+  const r = spawnDelivery('sh', ['-c', 'exit 0'], { input: BIG });
+  assert.deepEqual({ ok: r.ok, code: r.code, err: r.err, reason: r.reason }, { ok: true, code: 0, err: null, reason: null });
+});
+
+test('spawnDelivery: exit 3 without reading a large stdin → reason "exit 3", not EPIPE', () => {
+  const r = spawnDelivery('sh', ['-c', 'exit 3'], { input: BIG });
+  assert.deepEqual({ ok: r.ok, code: r.code, err: r.err, reason: r.reason }, { ok: false, code: 3, err: null, reason: 'exit 3' });
+});

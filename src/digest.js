@@ -8,6 +8,9 @@ import { createSink } from './sink.js';
 import { runMetricsBatch, resolveMetric, flightlogSummary, loadWeeks, renderDigest } from './metrics.js';
 import { normalizeFallback, dispatchAlert, deliveryRecord, deliveryFailed, describeDelivery } from './fallback.js';
 
+/** Snapshot fields a metric name must not shadow (`week` is added by loadWeeks). */
+const RESERVED = ['ts', 'kind', 'app', 'errors', 'week'];
+
 /** Read a file, or '' if it's missing/unreadable (a fresh app has no history yet). */
 function readOrEmpty(path) {
   try { return readFileSync(path, 'utf8'); } catch { return ''; }
@@ -29,6 +32,9 @@ export function runDigest({ configPath, dryRun = false, now = Date.now() }) {
   if (!d || !Array.isArray(d.metrics)) {
     throw new Error('config has no "digest.metrics" — nothing to collect');
   }
+  // A metric named like a snapshot field would overwrite it (loadWeeks then drops the row).
+  const clash = d.metrics.find((m) => RESERVED.includes(m.name));
+  if (clash) throw new Error(`digest metric name "${clash.name}" is reserved (${RESERVED.join(', ')}) — rename it`);
   const app = d.app || 'app';
   const ts = new Date(now).toISOString();
   const metricNames = d.metrics.map((m) => m.name);

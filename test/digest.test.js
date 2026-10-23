@@ -277,3 +277,18 @@ test('privacy invariant: error message/stack never reach the history line or the
   // belt-and-suspenders: the flagged value is a bare name, not an object carrying detail
   assert.equal(res.flagged.join(','), 'ApiError');
 });
+
+// ── a metric named like a snapshot field would shadow it → fail loud at config load ───────
+test('runDigest: metric named ts/kind/app/errors/week → throws; a normal name still runs', (t) => {
+  const dir = tmp(t);
+  const cfg = (name) => {
+    const p = join(dir, `${name}.json`);
+    writeFileSync(p, JSON.stringify({ digest: { app: 'demo', metrics: [{ name, command: 'echo', args: ['7'] }] } }));
+    return p;
+  };
+  for (const name of ['ts', 'kind', 'app', 'errors', 'week']) {
+    assert.throws(() => runDigest({ configPath: cfg(name), dryRun: true, now: ANCHOR }), new RegExp(`"${name}" is reserved`));
+  }
+  const out = captureStdout(() => runDigest({ configPath: cfg('users'), dryRun: true, now: ANCHOR }));
+  assert.match(out, /users/);
+});
