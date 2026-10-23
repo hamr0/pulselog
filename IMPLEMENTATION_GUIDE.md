@@ -572,7 +572,8 @@ prefer `pulselog --test-alert` (add `--digest`/`--backup` for those blocks) run 
 **test unit with the same sandbox directives** as the real one (copy the unit, swap
 `ExecStart` to `… pulselog.js --test-alert --digest --config …`, `systemctl start` it):
 it sends one test message through the primary email and the fallback, prints each
-result, writes no JSONL, and exits 1 if any configured path fails.
+result, writes no JSONL, and exits 1 if any configured path fails. It always sends for
+real, so `--dry-run` with it is a usage error (exit 1, nothing sent).
 
 ```bash
 # health: exit 0 + silent when green (exit 1 only if an alert was attempted and every path failed)
