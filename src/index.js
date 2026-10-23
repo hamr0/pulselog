@@ -8,3 +8,4 @@ export { runBackup } from './backup.js';
 export { CHECKS } from './checks.js';
 export { createSink } from './sink.js';
 export { assembleEmail, sendEmail } from './email.js';
+export { testAlert } from './testalert.js';

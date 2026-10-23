@@ -27,15 +27,17 @@ and the optional flightlog pairing — see the
 [Implementation Guide](IMPLEMENTATION_GUIDE.md) (Part B is pulselog; it ships in the
 package and needs no flightlog).
 
-> **Status:** `0.7.2` is published — all three modes (health + digest + **`backup`**)
-> are on npm, and `0.7.2` ships the deployment
+> **Status:** `0.8.0` is the current release — all three modes (health + digest + **`backup`**)
+> are on npm, and `0.7.2` shipped the deployment
 > **[Implementation Guide](IMPLEMENTATION_GUIDE.md)** in the package. `0.4.0` added a per-check `timeoutMs` and opt-in in-run `retries`, and a
 > security pass (config-perms gate, backup dir/umask tightening, per-engine password env,
 > name-escape guards). `0.4.1` refines the config-ownership gate to allow a **root-owned**
 > config (not just self-owned), matching `ssh`. `0.6.0` aligns the `command` check's
 > timeout reason with the others (`timeout after Ns`, not the misleading `exit 1
 > (timeout)`). `0.7.0` adds an opt-in **`alert.fallback`** sink (a second, out-of-band
-> delivery path so a dead MTA can't silence the tool). Defaults are unchanged.
+> delivery path so a dead MTA can't silence the tool). `0.8.0` adds delivery honesty: a
+> `mailTimeoutMs` cap on the mail handoff, a durable `kind:"delivery"` record, exit `1` when every
+> delivery path failed, and `--test-alert`. Defaults are unchanged otherwise.
 
 ## What pulselog is and is NOT
 
@@ -83,7 +85,8 @@ pulselog --digest --dry-run --config …              # render the digest, don't
     "email": "ops@myapp.com",                 // omit → log only, no email
     "from": "alerts@myapp.com",
     "app": "myapp",
-    "logTail": "/var/lib/myapp/errors.jsonl"  // optional: paste recent flightlog errors into the alert
+    "logTail": "/var/lib/myapp/errors.jsonl", // optional: paste recent flightlog errors into the alert
+    "mailTimeoutMs": 30000                    // optional (0.8.0): cap on the mail/sendmail handoff (default 30000)
   },
   "checks": [
     { "type": "http",     "name": "api",    "enabled": true, "url": "http://127.0.0.1:3000/api/health", "expectStatus": 200 },
@@ -178,7 +181,7 @@ email) is built in. You never write a `stats.js` again.
 {
   "digest": {
     "app": "addypin",
-    "history": "/var/lib/addypin/stats.jsonl",  // pulselog writes + reads this (one line/week, the record)
+    "history": "/var/lib/addypin/stats.jsonl",  // pulselog writes + reads this (one stats line/week, the record; + a delivery line per send)
     "email": "ops@addypin.com",                 // omit / --dry-run → print, no send
     "from": "alerts@addypin.com",
     "weeks": 4,                                   // rows in the table (default 4)
@@ -195,11 +198,12 @@ email) is built in. You never write a `stats.js` again.
 | Option | Default | Meaning |
 |---|---|---|
 | `app` | `"app"` | Label in the snapshot line, email subject, and header. |
-| `history` | — | The snapshot JSONL pulselog appends to (one line/week) and reads back for the table. **Its own file.** |
+| `history` | — | The snapshot JSONL pulselog appends to (one `stats` line/week, plus a `delivery` line per send — see below) and reads back for the table. **Its own file.** |
 | `email` / `from` | — | Recipient/sender. Omit → no email; the history line is the artifact. |
+| `mailTimeoutMs` | `30000` | Cap on the `mail`/`sendmail` handoff (0.8.0). Past it the send is killed and counts as a **failed primary** (reason `timeout`). Not `timeoutMs` — see "Email transport". |
 | `weeks` | `4` | How many weeks the table shows. |
 | `skipIfFlat` | `false` | `true` → skip the email when every metric is unchanged vs last week **and** nothing is flagged. |
-| `metrics[]` | — | `{ name, command?, args?, timeoutMs? }`. A metric with its own `command` prints **one integer**; anything else records `null` for that metric (noted, never fatal). Run **without a shell** (`command` + `args` array, like the health `command` check) — for a pipe/shell metric, use `"command": "sh", "args": ["-c", "… | …"]`. A metric with **no** `command` is filled by name from `metricsCommand` (below). |
+| `metrics[]` | — | `{ name, command?, args?, timeoutMs? }`. A metric with its own `command` prints **one integer**; anything else records `null` for that metric (noted, never fatal). Run **without a shell** (`command` + `args` array, like the health `command` check) — for a pipe/shell metric, use `"command": "sh", "args": ["-c", "… | …"]`. A metric with **no** `command` is filled by name from `metricsCommand` (below). **Reserved names:** `ts`, `kind`, `app`, `errors`, `week` collide with snapshot fields and fail config load (exit `1`) — pick another name. |
 | `metricsCommand` | — | Optional. `{ command, args?, timeoutMs? }` — one command that prints a **flat JSON object of named integers** in a single pass; each `metrics[]` entry without its own `command` takes its value by `name` from that object. See "Batch metrics" below. |
 | `flightlog` | — | Optional. `{ file, groupBy?, flagAtLeast? }` — see below. |
 
@@ -209,6 +213,22 @@ summary, kept for trend):
 ```json
 {"ts":"2026-05-31T06:00:00Z","kind":"stats","app":"addypin","users":2,"pins":5,"errors":{"total_7d":31,"top":{"ApiTimeout":24,"SmtpAuthError":7},"flagged":["ApiTimeout"]}}
 ```
+
+**The delivery line (0.8.0).** After the snapshot, a real (non-`--dry-run`) digest run
+appends a second line to the same `history` file recording what happened to the email:
+
+```json
+{"ts":"2026-05-31T06:00:03Z","kind":"delivery","app":"addypin","week":"2026-W22","status":"fail","emailed":{"transport":"mail","ok":false,"reason":"timeout"},"fallback":null}
+```
+
+`status` is `"ok"` or `"fail"`; `emailed` is `{transport, ok, reason?}` (or `null` when no
+`email` is configured); `fallback` is `{ok, reason?, err?}` (or `null` when none is
+configured). `reason` is `timeout`, `exit N`, an errno such as `ENOENT`, or `no-mta`.
+`ok` means *handed off / queued*, not delivered. The week-over-week reader ignores every
+non-`stats` row (legacy rows with no `kind` still count), so the extra line never
+disturbs the table. **It is written only when `history` is set** — without `history` there
+is no durable delivery trail, and the signal is the exit code plus the stderr result line. **Check this line, not just the snapshot** — a normal-looking
+`stats` row proves the metrics ran, not that the mail left the box.
 
 **The email** (rendered from `history`):
 
@@ -306,6 +326,7 @@ size floor, and rolls retention. pulselog owns the **envelope**; you declare the
   ],
   "command": "node", "args": ["dump.mjs"],  // (C) opt-out: your own dump writes into $PULSELOG_STAGE
   "timeoutMs": 600000,                       //     optional cap on the command
+  "mailTimeoutMs": 30000,                    //     optional cap on the failure-alert mail handoff (0.8.0; NOT timeoutMs)
 
   "keepLast": 7,                            // retention: keep newest N …
   "keepDays": 30,                           //   … and/or newer-than-D days (≥1 required; union — never deletes what a rule keeps)
@@ -352,6 +373,7 @@ Three things to nail down for that setup:
   there is **no publish and no rotation**, a `status:"fail"` line is written, an alert
   is attempted, and the CLI exits **1**. A prior good archive is never touched.
 - **`timeoutMs`** (optional) caps the command; on timeout it's treated as a failure.
+  (`mailTimeoutMs`, 0.8.0, is a separate knob: it caps only the failure-alert mail handoff.)
 
 Two sources that would stage under the same filename (e.g. two different dirs both named
 `config`) **fail loud** rather than one silently overwriting the other — give one a
@@ -371,7 +393,8 @@ net.
 ## The shared JSONL dialect
 
 `kind` tells the streams apart: `uncaught`/`manual` (flightlog), `health` (pulselog
-health), `stats` (pulselog digest), `backup` (pulselog backup). Each writer owns its
+health), `alert` (health's delivery outcome), `stats` + `delivery` (pulselog digest —
+the snapshot and what happened to its email), `backup` (pulselog backup). Each writer owns its
 **own** file — two processes must not append one file (rotation races, perms). Compose
 at read time:
 
@@ -396,6 +419,26 @@ record.
 > notice. The concrete answer is the **`alert.fallback`** sink below (an out-of-band push
 > that doesn't ride the mail path at all); the JSONL line and an off-box `file-age`
 > dead-man's-switch remain complementary passive signals.
+
+**`mail`/`sendmail` exit 0 means queued, not delivered.** A clean handoff only proves the
+local MTA accepted the message; a later bounce is invisible to pulselog (see the off-box
+recipe below).
+
+**Handoff timeout — `mailTimeoutMs` (0.8.0).** Optional on `alert`, `digest` and `backup`
+(default `30000`). A send that hasn't returned by then is killed and counts as a **failed
+primary** with reason `timeout`, so a fallback with `when: "on-primary-failure"` fires
+(before 0.8.0 a hung `sendmail` blocked forever and the fallback never ran). It is
+deliberately **not** `timeoutMs`: `backup.timeoutMs` already bounds the backup command.
+Every delivery child (`mail`, `sendmail`, the fallback) runs in its own process group and
+the **whole group** is SIGKILLed on timeout (the direct child too — SIGKILL, not SIGTERM,
+so a child that ignores TERM can't outlive the timeout), so a looping `postdrop` grandchild dies too.
+
+- **Race:** a slow handoff that queues just before the timeout is also retried via the
+  fallback, so you can get a duplicate. A duplicate beats silence.
+- **Limitation:** Node can't run signal handlers while the synchronous send blocks, so if
+  pulselog itself is SIGINT/SIGTERMed mid-send, the mail process group is orphaned. Under
+  systemd the unit's cgroup kill on stop/timeout reaps it; under cron or an interactive
+  shell it runs until it exits on its own.
 
 ### Fallback alert sink — a second path so a dead MTA can't silence you
 
@@ -426,9 +469,11 @@ at Gmail for a month, health alerts included). Add a `fallback` to any alert-bea
   fires only when the local `mail`/`sendmail` handoff exits non-zero / is missing. With no
   `email`, the fallback is the sole sink and always fires.
 - **Best-effort, never fatal:** a broken sink (non-zero, missing binary, timeout) is
-  **recorded, not raised** — it never throws and never changes the exit code. The delivery
-  outcome is durable: health writes a `kind:"alert"` line (`emailed`/`fallback` outcomes);
-  backup folds a `fallback` field into its fail record.
+  **recorded, not raised** — it never throws. The delivery outcome is durable: health writes
+  a `kind:"alert"` line (`emailed`/`fallback` outcomes, each with a `reason` on failure);
+  the digest writes a `kind:"delivery"` line; backup folds `reason` and a `fallback` field
+  into its fail record. Since 0.8.0 the **exit code** reflects delivery in one case only:
+  health/digest exit `1` when *every* attempted path failed (see "Exit codes").
 - **Privacy holds:** the digest fallback carries the same already-redacted render (counts +
   group names only), never raw messages/stacks.
 - **Loud on misconfig:** a `fallback` with no `command` (or a bad `when`/`args`) fails the
@@ -497,15 +542,48 @@ account default : gmail
 > watcher alerts. (Same pattern replaces a success-ping/heartbeat without pulselog ever
 > phoning home.) Or just gate on the exit code in your scheduler.
 
+## Validate delivery: `--test-alert`
+
+```sh
+pulselog --test-alert --config ./pulselog.config.json             # the health `alert` block
+pulselog --test-alert --digest --config ./pulselog.config.json    # the `digest` block
+pulselog --test-alert --backup --config ./pulselog.config.json    # the `backup` block
+```
+
+Sends **one test message** through the primary email (if configured) **and** the
+fallback (if configured) — always, ignoring `when`. It prints each result:
+
+```
+primary (mail): ok, queued, not proof of delivery
+primary (mail): fail (timeout)
+fallback: not configured
+```
+
+Exits `1` if any configured path fails, or if nothing is configured. Writes no JSONL.
+Passing **both** `--digest` and `--backup` is a usage error (exit `1`, nothing sent).
+Passing `--dry-run` is also a usage error (exit `1`, nothing sent): `--test-alert` always
+sends for real.
+**Run it under the real unit's sandbox** (`systemctl start` a throwaway unit with the same
+hardening directives), never by hand as root: root bypasses `NoNewPrivileges`,
+`ProtectHome` and friends, which is exactly how the failure below went undetected. `ok`
+still means queued; confirm arrival in your MTA log or inbox.
+
 ## Exit codes
 
 - **0** — the run completed (any health failures were emailed + logged; the digest
   ran; the backup succeeded). Keeps cron quiet on a normal health failure; the alert
-  is the signal.
+  is the signal. Also `0`: a flat-week digest skip, and a run with no `email`/`fallback`
+  configured (nothing was attempted).
 - **1** — the run itself couldn't proceed (missing/invalid config) **— or a backup
   failed.** Backup diverges on purpose (D15): producing the archive *is* the job, so
   failing to produce it is a loud failure (like a bad config), never a quiet one.
   Surfaces via cron/systemd so a missing backup isn't silent.
+- **1 (0.8.0)** — **health or digest attempted to send and every attempted delivery path
+  failed** (primary mail and, if configured, the fallback). When the alert itself dies,
+  nothing else signals, so the exit code does: `systemctl --failed` or an off-box watcher
+  sees it. "Silent on green" is intact: green runs exit `0` and send nothing. The CLI line
+  says what happened, e.g. `pulselog: digest addypin 2026-W42 → mail:fail(timeout),
+  fallback:fail(exit 3)`; a clean send prints `→ mail`.
 
 ## Privacy & threat model
 
@@ -545,7 +623,7 @@ return and what goes in `alert.app` / context.
 - **First week is a baseline** — no prior snapshot, so deltas are blank, not zero.
   A newly-added metric shows baseline until it has a prior week.
 - **`--dry-run` does not append or send** — it only renders. A real digest run
-  appends exactly one line to `history`.
+  appends one `stats` snapshot line plus one `delivery` line (0.8.0) to `history`.
 - **`history` is append-only and not rotated** — it's the long-term record (~52
   lines/year). Don't point `maxBytes` rotation at it; it's tiny.
 - **The `sqlite` *backup* engine needs Node ≥ 22.5 (backup).** It uses the bundled
@@ -573,6 +651,23 @@ return and what goes in `alert.app` / context.
   `tar`-over-a-live-tree, no worse. For a consistent capture, quiesce the writer or
   dump through a `command` that snapshots first. (The curated `db` engines *do* take a
   consistent dump — that's their whole value.)
+- **Running under systemd hardening: postdrop needs its group (health/digest/backup).**
+  `mail`/`sendmail` on Postfix hands the message to the setgid `postdrop` binary, which
+  writes to `/var/spool/postfix/maildrop` (`drwx-wx--- postfix:postdrop`). A unit with
+  `NoNewPrivileges=true` disables that setgid bit, so the service user can't write the
+  queue and `postdrop` loops on `mail_queue_enter: create file maildrop/…: Permission
+  denied` every 10s. Fix: add **`SupplementaryGroups=postdrop`** (keep
+  `NoNewPrivileges=true`). If you use `ProtectSystem=strict`, also add
+  `ReadWritePaths=/var/spool/postfix/maildrop`. And use **`ProtectHome=read-only`**, not
+  `true`: `ProtectHome=true` hides `~/.msmtprc` from an msmtp fallback. Real incident:
+  addypin's weekly digest never arrived for ~3 months (a second app on the same box hit
+  it too) because the unit had `NoNewPrivileges=true` and no group; pre-0.8.0 the send
+  had no timeout, so the fallback never fired, `stats.jsonl` still gained a normal row
+  each week, and the journal rotated. Both adopters' validations ran the send by hand as
+  root, bypassing the sandbox. From 0.8.0 the send times out (`mailTimeoutMs`), the
+  `kind:"delivery"` line records `reason:"timeout"`, and the unit exits failed. Validate
+  with `--test-alert` from a unit with the real sandbox. See the
+  [Implementation Guide](IMPLEMENTATION_GUIDE.md) §B6/§B9.
 - **Pull the off-host copy; lock the pull key (backup).** pulselog produces the archive
   on the box — getting it off-host (the copy that survives the box being *lost*) is
   yours, and it should be a **pull, not a push**. If the box held a credential to write

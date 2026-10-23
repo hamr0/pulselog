@@ -35,7 +35,7 @@ export function normalizeFallback(fallback) {
  * Body → the child's stdin, subject → `PULSELOG_SUBJECT`.
  * @param {{ command: string, args: string[], timeoutMs: number }} fb
  * @param {{ subject?: string, body?: string }} msg
- * @returns {{ attempted: true, ok: boolean, code: number|null, killed: boolean, err: string|null }}
+ * @returns {{ attempted: true, ok: boolean, code: number|null, killed: boolean, err: string|null, reason: string|null }}
  */
 export function fireFallback(fb, { subject, body }) {
   try {
@@ -44,11 +44,12 @@ export function fireFallback(fb, { subject, body }) {
       env: { PULSELOG_SUBJECT: subject == null ? '' : String(subject) },
       timeoutMs: fb.timeoutMs,
     });
-    return { attempted: true, ok: r.ok, code: r.code, killed: r.killed, err: r.err };
+    return { attempted: true, ok: r.ok, code: r.code, killed: r.killed, err: r.err, reason: r.reason };
   } catch (err) {
     // spawnDelivery only throws on a malformed call, which normalizeFallback already ruled
     // out — but stay guarded so the best-effort contract holds no matter what.
-    return { attempted: true, ok: false, code: null, killed: false, err: String((err && err.message) || err) };
+    const msg = String((err && err.message) || err);
+    return { attempted: true, ok: false, code: null, killed: false, err: msg, reason: msg };
   }
 }
 
@@ -57,16 +58,57 @@ export function fireFallback(fb, { subject, body }) {
  * per the fallback's `when`. The fallback fires when: `when:"always"`, OR the primary
  * handoff failed, OR there is no primary at all (fallback-only box). Best-effort on the
  * fallback; the return reports each sink's outcome so the caller can record it (D5).
- * @param {{ email?: string, from?: string, subject: string, body: string,
+ * `timeoutMs` bounds the primary handoff (0.8.0) — a hang counts as a primary failure.
+ * @param {{ email?: string, from?: string, subject: string, body: string, timeoutMs?: number,
  *   fb: {command:string,args:string[],when:string,timeoutMs:number}|null }} args
- * @returns {{ emailed: {transport:'mail'|'sendmail'|'none', ok:boolean}|null,
- *   fallback: {attempted:true, ok:boolean, code:number|null, killed:boolean, err:string|null}|null }}
+ * @returns {{ emailed: {transport:'mail'|'sendmail'|'none', ok:boolean, reason:string|null}|null,
+ *   fallback: {attempted:true, ok:boolean, code:number|null, killed:boolean, err:string|null, reason:string|null}|null }}
  */
-export function dispatchAlert({ email, from, subject, body, fb }) {
-  const emailed = email ? sendEmail({ to: email, from, subject, body }) : null;
+export function dispatchAlert({ email, from, subject, body, fb, timeoutMs }) {
+  const emailed = email ? sendEmail({ to: email, from, subject, body, timeoutMs }) : null;
   let fallback = null;
   if (fb && (fb.when === 'always' || !emailed || !emailed.ok)) {
     fallback = fireFallback(fb, { subject, body });
   }
   return { emailed, fallback };
+}
+
+/**
+ * The durable shape of one delivery attempt (D5), shared by health / digest / backup so
+ * "emailed: fail (timeout), fallback: fail (exit 3)" survives in the JSONL even after the
+ * journal rotates (the addypin incident left no trace anywhere else). `status` is `'fail'`
+ * only when something was attempted and every attempted path failed.
+ * @param {ReturnType<typeof dispatchAlert>} out
+ * @returns {{ status: 'ok'|'fail', emailed: {transport:string, ok:boolean, reason?:string}|null,
+ *   fallback: {ok:boolean, reason?:string, err?:string}|null }}
+ */
+export function deliveryRecord({ emailed, fallback }) {
+  return {
+    status: deliveryFailed({ emailed, fallback }) ? 'fail' : 'ok',
+    emailed: emailed ? { transport: emailed.transport, ok: emailed.ok, ...(emailed.reason ? { reason: emailed.reason } : {}) } : null,
+    fallback: fallback
+      ? { ok: fallback.ok, ...(fallback.reason ? { reason: fallback.reason } : {}),
+          ...(fallback.err ? { err: fallback.err } : {}) } // `err` kept: the pre-0.8.0 record field
+      : null,
+  };
+}
+
+/**
+ * True when delivery was attempted and every attempted path failed — the one case where
+ * the alert itself is what broke, so the CLI exits 1 (0.8.0) instead of staying silent.
+ * @param {ReturnType<typeof dispatchAlert>} out
+ */
+export function deliveryFailed({ emailed, fallback }) {
+  return Boolean(emailed || fallback) && !(emailed && emailed.ok) && !(fallback && fallback.ok);
+}
+
+/**
+ * One-line human summary for stderr: `mail`, `mail:fail(timeout), fallback`, … A clean
+ * primary-only send reads exactly as before 0.8.0 (`mail`).
+ * @param {ReturnType<typeof dispatchAlert>} out
+ */
+export function describeDelivery({ emailed, fallback }) {
+  const part = (name, r) => (r.ok ? name : `${name}:fail(${r.reason || 'failed'})`);
+  return [emailed && part(emailed.transport, emailed), fallback && part('fallback', fallback)]
+    .filter(Boolean).join(', ') || 'none';
 }

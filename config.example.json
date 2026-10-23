@@ -9,6 +9,7 @@
     "from": "alerts@myapp.com",
     "app": "myapp",
     "logTail": "/var/lib/myapp/errors.jsonl",
+    "mailTimeoutMs": 30000,
     "fallback": {
       "when": "always",
       "command": "curl",

@@ -6,7 +6,10 @@
 import { readFileSync } from 'node:fs';
 import { createSink } from './sink.js';
 import { runMetricsBatch, resolveMetric, flightlogSummary, loadWeeks, renderDigest } from './metrics.js';
-import { normalizeFallback, dispatchAlert } from './fallback.js';
+import { normalizeFallback, dispatchAlert, deliveryRecord, deliveryFailed, describeDelivery } from './fallback.js';
+
+/** Snapshot fields a metric name must not shadow (`week` is added by loadWeeks). */
+const RESERVED = ['ts', 'kind', 'app', 'errors', 'week'];
 
 /** Read a file, or '' if it's missing/unreadable (a fresh app has no history yet). */
 function readOrEmpty(path) {
@@ -17,7 +20,11 @@ function readOrEmpty(path) {
  * Run the weekly digest once.
  * @param {{ configPath: string, dryRun?: boolean, now?: number }} args
  * @returns {{ app: string, week: string, metrics: Record<string, number|null>,
- *   flagged: string[], delivered: 'mail'|'sendmail'|'fallback'|'none'|'skipped'|'dry-run' }}
+ *   flagged: string[], delivered: string, deliveryFailed: boolean }}
+ *   `delivered` is `'dry-run'`, `'skipped'`, `'none'`, or the per-path summary from
+ *   `describeDelivery` (`'mail'`, `'mail:fail(timeout), fallback'`, …). `deliveryFailed` is
+ *   true only when a send was attempted and every path failed (the CLI then exits 1).
+ *   [`delivered` was a narrow union before 0.8.0 that ignored each path's `ok`.]
  */
 export function runDigest({ configPath, dryRun = false, now = Date.now() }) {
   const config = JSON.parse(readFileSync(configPath, 'utf8'));
@@ -25,6 +32,9 @@ export function runDigest({ configPath, dryRun = false, now = Date.now() }) {
   if (!d || !Array.isArray(d.metrics)) {
     throw new Error('config has no "digest.metrics" — nothing to collect');
   }
+  // A metric named like a snapshot field would overwrite it (loadWeeks then drops the row).
+  const clash = d.metrics.find((m) => RESERVED.includes(m.name));
+  if (clash) throw new Error(`digest metric name "${clash.name}" is reserved (${RESERVED.join(', ')}) — rename it`);
   const app = d.app || 'app';
   const ts = new Date(now).toISOString();
   const metricNames = d.metrics.map((m) => m.name);
@@ -74,8 +84,9 @@ export function runDigest({ configPath, dryRun = false, now = Date.now() }) {
 
   // 5. deliver: print on dry-run; skip a flat week if asked; else email if a
   //    recipient is set; otherwise the history line is the artifact.
-  /** @type {'mail'|'sendmail'|'fallback'|'none'|'skipped'|'dry-run'} */
+  /** @type {string} */
   let delivered;
+  let failed = false;
   if (dryRun) {
     process.stdout.write(`Subject: ${subject}\n\n${body}\n`);
     delivered = 'dry-run';
@@ -83,11 +94,17 @@ export function runDigest({ configPath, dryRun = false, now = Date.now() }) {
     delivered = 'skipped';
   } else if (d.email || fb) {
     // Fallback carries the SAME already-redacted render (counts + names only) — privacy holds.
-    const { emailed, fallback } = dispatchAlert({ email: d.email, from: d.from, subject, body, fb });
-    delivered = emailed ? emailed.transport : (fallback ? 'fallback' : 'none');
+    const out = dispatchAlert({ email: d.email, from: d.from, subject, body, fb, timeoutMs: d.mailTimeoutMs });
+    delivered = describeDelivery(out);
+    failed = deliveryFailed(out);
+    // D5 for the digest (0.8.0): record the outcome durably, AFTER the snapshot so a crash
+    // mid-send still leaves the week's numbers. loadWeeks skips this row (kind ≠ stats).
+    if (d.history) {
+      createSink({ file: d.history, maxBytes: 0 }).emit({ ts: new Date().toISOString(), kind: 'delivery', app, week: newest ? newest.week : '', ...deliveryRecord(out) });
+    }
   } else {
     delivered = 'none';
   }
 
-  return { app, week: newest ? newest.week : '', metrics, flagged: flightlog ? flightlog.flagged : [], delivered };
+  return { app, week: newest ? newest.week : '', metrics, flagged: flightlog ? flightlog.flagged : [], delivered, deliveryFailed: failed };
 }

@@ -47,6 +47,9 @@ export function assembleEmail({ failures, host, ts, alert }) {
   return { subject, body: L.join('\n') + '\n' };
 }
 
+/** Default bound on the primary MTA handoff (0.8.0). A healthy local handoff takes ~1s. */
+export const PRIMARY_TIMEOUT_MS = 30_000;
+
 /** True if `cmd` is on PATH. */
 const has = (cmd) => spawnSync('sh', ['-c', `command -v ${cmd}`], { stdio: 'ignore' }).status === 0;
 
@@ -56,27 +59,36 @@ const has = (cmd) => spawnSync('sh', ['-c', `command -v ${cmd}`], { stdio: 'igno
  * `ok` is whether that handoff exited cleanly. NB: a clean handoff (`ok:true`) means
  * *queued*, not *delivered* — an async bounce can still follow. The fallback alert sink
  * (0.7.0) reads `ok` to decide whether to fire on `on-primary-failure`.
- * @returns {{ transport: 'mail'|'sendmail'|'none', ok: boolean }}
+ *
+ * 0.8.0: the handoff is bounded by `timeoutMs` (default 30s). A sandboxed unit can leave
+ * `postdrop` retrying forever (NoNewPrivileges drops its setgid bit), so an unbounded
+ * handoff would block the fallback and the whole run. A timeout is `ok:false`,
+ * `reason:'timeout'`, and the handoff's process group is killed. `reason` names the cause
+ * (`'timeout'`, `'exit N'`, an errno, `'no-mta'`), null on a clean handoff.
+ * @param {{ to: string, from?: string, subject: string, body: string, timeoutMs?: number }} msg
+ * @returns {{ transport: 'mail'|'sendmail'|'none', ok: boolean, reason: string|null }}
  */
-export function sendEmail({ to, from, subject, body }) {
+export function sendEmail({ to, from, subject, body, timeoutMs }) {
   // Header fields must be single-line: a newline in any of them (they can come from
   // config) would inject extra mail headers (e.g. a Bcc:). Body may keep its newlines.
   const oneLine = (s) => (s == null ? s : String(s).replace(/[\r\n]+/g, ' '));
   to = oneLine(to); from = oneLine(from); subject = oneLine(subject);
+  const t = Math.floor(Number(timeoutMs));
+  const timeout = Number.isFinite(t) && t > 0 ? t : PRIMARY_TIMEOUT_MS;
   if (has('mail')) {
     const args = ['-s', subject];
     if (from) args.push('-r', from);
     args.push(to);
-    const { ok } = spawnDelivery('mail', args, { input: body });
-    return { transport: 'mail', ok };
+    const { ok, reason } = spawnDelivery('mail', args, { input: body, timeoutMs: timeout });
+    return { transport: 'mail', ok, reason };
   }
   if (has('sendmail')) {
     const headers = [from && `From: ${from}`, `To: ${to}`, `Subject: ${subject}`, 'Content-Type: text/plain; charset=utf-8', '']
       .filter(Boolean)
       .join('\n');
-    const { ok } = spawnDelivery('sendmail', ['-t'], { input: headers + '\n' + body });
-    return { transport: 'sendmail', ok };
+    const { ok, reason } = spawnDelivery('sendmail', ['-t'], { input: headers + '\n' + body, timeoutMs: timeout });
+    return { transport: 'sendmail', ok, reason };
   }
   process.stderr.write(`pulselog: no \`mail\`/\`sendmail\` on PATH; would alert ${to}: ${subject}\n`);
-  return { transport: 'none', ok: false };
+  return { transport: 'none', ok: false, reason: 'no-mta' };
 }

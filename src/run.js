@@ -8,7 +8,7 @@ import { hostname } from 'node:os';
 import { CHECKS } from './checks.js';
 import { createSink } from './sink.js';
 import { assembleEmail } from './email.js';
-import { normalizeFallback, dispatchAlert } from './fallback.js';
+import { normalizeFallback, dispatchAlert, deliveryRecord, deliveryFailed } from './fallback.js';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -50,7 +50,8 @@ async function probe(cfg, defaults) {
 
 /**
  * @param {{ configPath: string }} args
- * @returns {Promise<{ total: number, failures: number }>}
+ * @returns {Promise<{ total: number, failures: number, deliveryFailed: boolean }>}
+ *   `deliveryFailed` (0.8.0): an alert was attempted and every delivery path failed.
  */
 export async function run({ configPath }) {
   const config = JSON.parse(readFileSync(configPath, 'utf8'));
@@ -84,18 +85,17 @@ export async function run({ configPath }) {
     sink.emit({ ts, kind: 'health', name: '_heartbeat', message: `all ${results.length} checks ok`, status: 'ok', host });
   }
 
+  let alertFailed = false;
   if (failures.length && config.alert && (config.alert.email || fb)) {
     const { subject, body } = assembleEmail({ failures, host, ts, alert: config.alert });
-    const { emailed, fallback } = dispatchAlert({ email: config.alert.email, from: config.alert.from, subject, body, fb });
-    // D5: record the delivery attempt(s) so "emailed: fail, fallback: ok" is durable.
-    if (emailed || fallback) {
-      sink.emit({
-        ts, kind: 'alert', name: '_alert', status: (emailed && emailed.ok) || (fallback && fallback.ok) ? 'ok' : 'fail', host,
-        emailed: emailed ? { transport: emailed.transport, ok: emailed.ok } : null,
-        fallback: fallback ? { ok: fallback.ok, ...(fallback.err ? { err: fallback.err } : {}) } : null,
-      });
+    const out = dispatchAlert({ email: config.alert.email, from: config.alert.from, subject, body, fb, timeoutMs: config.alert.mailTimeoutMs });
+    // D5: record the delivery attempt(s) so "emailed: fail (timeout), fallback: ok" is durable.
+    if (out.emailed || out.fallback) {
+      sink.emit({ ts, kind: 'alert', name: '_alert', host, ...deliveryRecord(out) });
     }
+    // 0.8.0: the alert itself failed on every path — the CLI exits 1 so it isn't silent.
+    alertFailed = deliveryFailed(out);
   }
 
-  return { total: results.length, failures: failures.length };
+  return { total: results.length, failures: failures.length, deliveryFailed: alertFailed };
 }

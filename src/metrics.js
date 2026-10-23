@@ -105,6 +105,9 @@ export function loadWeeks(jsonl) {
     let row;
     try { row = JSON.parse(line); } catch { continue; }
     if (!row || !row.ts) continue;
+    // Only snapshots count: the history also carries kind:"delivery" lines (0.8.0), which
+    // would otherwise replace the week's metrics. Legacy rows with no `kind` are snapshots.
+    if (row.kind != null && row.kind !== 'stats') continue;
     const week = isoWeek(row.ts);
     const prev = byWeek.get(week);
     if (!prev || row.ts > prev.ts) byWeek.set(week, { ...row, week });
