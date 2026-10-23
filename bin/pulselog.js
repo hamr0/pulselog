@@ -74,6 +74,10 @@ Promise.resolve()
         process.stderr.write('pulselog: --test-alert takes one of --digest or --backup, not both\n');
         return 1;
       }
+      if (dryRun) {
+        process.stderr.write('pulselog: --test-alert always sends for real; it has no --dry-run\n');
+        return 1;
+      }
       // Test-alert: prove both delivery paths now; writes no JSONL. Exit 1 if any path failed.
       const { ok, lines } = testAlert({ configPath, mode: backup ? 'backup' : digest ? 'digest' : 'health' });
       process.stdout.write(lines.join('\n') + '\n');

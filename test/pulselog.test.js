@@ -183,11 +183,11 @@ test('CLI[sec]: refuses a group/world-writable config; runs a 0600 one', (t) => 
 
 // ── (a) per-check timeoutMs on service/disk + a labeled timeout ──────────────────
 // service and disk used to hardcode 5000ms and never label a kill as a timeout. Both
-// now read `timeoutMs` and say "timeout after Ns". A fake binary that sleeps far past
+// now read `timeoutMs` and say "timeout after Ns". A fake binary that sleeps 60s, far past
 // the timeout proves the knob is honored (fast return) AND the label is correct.
 test('disk: honors timeoutMs and labels a timeout', async (t) => {
   const dir = tmp(t);
-  writeFileSync(join(dir, 'df'), '#!/bin/sh\nsleep 10\n');
+  writeFileSync(join(dir, 'df'), '#!/bin/sh\nexec sleep 60\n');
   chmodSync(join(dir, 'df'), 0o755);
   shadowPath(t, dir);
   const start = Date.now();
@@ -200,7 +200,7 @@ test('disk: honors timeoutMs and labels a timeout', async (t) => {
 
 test('service: honors timeoutMs and labels a timeout', async (t) => {
   const dir = tmp(t);
-  writeFileSync(join(dir, 'systemctl'), '#!/bin/sh\nsleep 10\n');
+  writeFileSync(join(dir, 'systemctl'), '#!/bin/sh\nexec sleep 60\n');
   chmodSync(join(dir, 'systemctl'), 0o755);
   shadowPath(t, dir);
   const start = Date.now();
@@ -217,7 +217,7 @@ test('service: honors timeoutMs and labels a timeout', async (t) => {
 // checks. A genuine non-zero exit must still read `exit N` — the two paths stay distinct.
 test('command: a timeout kill reads "timeout after Ns", not "exit 1"', async (t) => {
   const start = Date.now();
-  const r = await command({ command: 'sh', args: ['-c', 'sleep 10'], timeoutMs: 1000 });
+  const r = await command({ command: 'sh', args: ['-c', 'exec sleep 60'], timeoutMs: 1000 });
   const elapsed = Date.now() - start;
   assert.equal(r.ok, false);
   assert.match(r.reason, /^timeout after \d+s/);

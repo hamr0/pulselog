@@ -201,6 +201,20 @@ test('CLI --test-alert: --digest and --backup together → usage error, exit 1, 
   assert.equal(existsSync(fired), false, 'neither path was exercised');
   assert.equal(cli(dir, ['--test-alert', '--backup', '--config', cfg]).status, 0, 'one flag alone still works');
 });
+test('CLI --test-alert: --dry-run → usage error, exit 1, nothing sent', (t) => {
+  const dir = tmp(t);
+  const sent = join(dir, 'sent.log'); // a `mail` that records it was called
+  writeFileSync(join(dir, 'mail'), `#!/bin/sh\ncat >/dev/null\necho SENT >> ${sent}\n`);
+  chmodSync(join(dir, 'mail'), 0o755);
+  const { fired, fb } = recFb(dir, 'always');
+  const cfg = writeCfg(dir, testCfg(dir, 'health', { email: 'ops@x', fallback: fb }));
+  const r = cli(dir, ['--test-alert', '--dry-run', '--config', cfg]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /--test-alert always sends for real; it has no --dry-run/);
+  assert.equal(existsSync(fired), false, 'fallback not fired');
+  assert.equal(existsSync(sent), false, 'primary mail not fired');
+  assert.equal(cli(dir, ['--test-alert', '--config', cfg]).status, 0, 'without --dry-run it still sends');
+});
 test('CLI --test-alert: fallback-only box works; neither path configured → exit 1', (t) => {
   const dir = tmp(t);
   const only = cli(dir, ['--test-alert', '--config', writeCfg(dir, testCfg(dir, 'health', { fallback: OK_FB }))]);
