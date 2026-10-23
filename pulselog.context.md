@@ -559,6 +559,8 @@ fallback: not configured
 
 Exits `1` if any configured path fails, or if nothing is configured. Writes no JSONL.
 Passing **both** `--digest` and `--backup` is a usage error (exit `1`, nothing sent).
+Passing `--dry-run` is also a usage error (exit `1`, nothing sent): `--test-alert` always
+sends for real.
 **Run it under the real unit's sandbox** (`systemctl start` a throwaway unit with the same
 hardening directives), never by hand as root: root bypasses `NoNewPrivileges`,
 `ProtectHome` and friends, which is exactly how the failure below went undetected. `ok`

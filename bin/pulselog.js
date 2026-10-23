@@ -36,7 +36,7 @@ for (let i = 0; i < argv.length; i++) {
         '  pulselog --digest --config ./pulselog.config.json   weekly stats digest\n' +
         '  pulselog --digest --dry-run --config ./...          render digest, no write/email\n' +
         '  pulselog --backup --config ./backup.config.json     backup (curated dumps + includes → archive)\n' +
-        '  pulselog --test-alert [--digest|--backup] --config ./...  send a test via primary + fallback; exit 1 if a path fails\n\n' +
+        '  pulselog --test-alert [--digest|--backup] --config ./...  send a test via primary + fallback; exit 1 if a path fails (no --dry-run)\n\n' +
         'Health/digest stay silent on green and exit 1 only if a send fails on every path;\n' +
         'backup is silent on success and exits 1 on failure.\n' +
         'See README and config.example.json.\n',

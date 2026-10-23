@@ -24,7 +24,7 @@ sources:
 Every gate item is checked off in the PRD. (docs/archive/2026-05-31-prd.md:378-394)
 
 - **Health:** the section 13 coverage stands, 7/7 tests are green, and `tsc` is clean. (docs/archive/2026-05-31-prd.md:378-378)
-- **CLI dispatch:** `--digest` and `--dry-run` are wired and verified. Exit-code discipline holds in both modes: 0 for a normal run, 1 for bad config. (docs/archive/2026-05-31-prd.md:379-380)
+- **CLI dispatch:** `--digest` and `--dry-run` are wired and verified. Exit-code discipline holds in both modes: 0 for a normal run, 1 for bad config. From 0.8.0, health and digest also exit 1 when a send was attempted and every delivery path failed (see D3 in [alert-delivery-decisions](alert-delivery-decisions.md); docs/archive/2026-05-31-prd.md:552-555). (docs/archive/2026-05-31-prd.md:379-380)
 - **Digest:** metric-parse, ISO-week WoW and flightlog 7-day group+flag are tested. The privacy invariant is proven by test: only integers and error names/counts appear in the history line and the email. The suite is 18/18 green. The privacy test was mutation-checked, so a deliberate leak makes it fail. (docs/archive/2026-05-31-prd.md:381-384)
 - **Docs:** `pulselog.context.md` documents both modes, the one customization question and the refusals. (docs/archive/2026-05-31-prd.md:385-386)
 - **Packaging:** `npm pack` ships only the `files` allowlist. It was verified at 21 files, with no `docs/`, `.claude/`, `.github/`, `test/`, `CLAUDE.md` or `tsconfig` (LICENSE is auto-included). (docs/archive/2026-05-31-prd.md:387-388)

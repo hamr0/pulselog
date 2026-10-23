@@ -26,7 +26,7 @@ Two PRD sections lock how pulselog delivers alerts: the fallback sink (0.7.0) an
 - **D1, command sink only.** No native webhook. The command sink reuses the existing spawn, and a webhook would duplicate what `curl` does. Deferred (docs/archive/2026-05-31-prd.md:490-492).
 - **D2, default `when: "always"`.** In the incident the handoff succeeded (exit 0) and the bounce was async, so `on-primary-failure` would have stayed silent. `on-primary-failure` remains for handoff-only (docs/archive/2026-05-31-prd.md:493-495).
 - **D3, covers health, digest and backup.** A silently missing backup is the worst case, so it needs the fallback most (docs/archive/2026-05-31-prd.md:496-497).
-- **D4, best-effort, never fatal.** A broken sink is recorded and never throws or changes the exit code. An A/B control showed the same input crashes an unguarded process (exit 1) and is neutralized by the wrapper (exit 0) (docs/archive/2026-05-31-prd.md:498-500).
+- **D4, best-effort, never fatal.** A broken sink is recorded and never throws or changes the exit code (superseded in 0.8.0 for the all-paths-failed case, see D3 below). An A/B control showed the same input crashes an unguarded process (exit 1) and is neutralized by the wrapper (exit 0) (docs/archive/2026-05-31-prd.md:498-500).
 - **D5, the JSONL records each sink's outcome.** Health writes a `kind:"alert"` line, backup adds a `fallback` field on the fail record, and the digest writes `delivered:"fallback"` (docs/archive/2026-05-31-prd.md:501-502).
 - **D6, privacy holds.** The fallback carries the already-redacted render (counts and names only for the digest) (docs/archive/2026-05-31-prd.md:503-504).
 - **D7, `--dry-run` skips both sinks** (docs/archive/2026-05-31-prd.md:505).
