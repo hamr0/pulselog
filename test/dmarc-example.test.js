@@ -454,6 +454,92 @@ test('ingest: overlapping runs (3 at once over 1,500 messages) all exit 0, recor
   for (const r of results) assert.equal(r.status, 0, r.stderr);
   const ls = lines(out);
   assert.equal(ls.filter((l) => l.kind === 'dmarc-error').length, 0);
-  assert.equal(new Set(ls.filter((l) => l.kind === 'dmarc').map((l) => l.report_id)).size, 1500);
+  assert.equal(new Set(ls.filter((l) => l.kind === 'dmarc').map((l) => l.report_id)).size, 1500); // none lost (duplicate lines on disk are allowed)
   assert.equal(names(dir, 'done').length, 1500);
+  // ...and whatever duplicates the overlap wrote, readers count each report once: 1,500 reports x 3 msgs
+  const m = run('metric', out, 'example.com', 'msgs');
+  assert.equal(m.stdout.trim(), '4500');
+  // check: all 4,500 msgs are from an unexpected IP; --max-unknown 4500 is silent only if nothing is inflated
+  const c = run('check', out, '--domains', 'example.com', '--expected', '198.51.100.1', '--max-unknown', '4500');
+  assert.equal(c.status, 0, c.stderr);
+  assert.equal(c.stderr, '');
+});
+
+test('metric/check: the same report written twice in the JSONL counts once', () => {
+  const rec = { kind: 'dmarc', domain: 'example.com', org: 'google.com', report_id: 'dup', end: new Date((NOW - DAY) * 1000).toISOString(), msgs: 3, fail: 1, sources: [{ ip: '198.51.100.9', count: 3, dkim: 'fail', spf: 'fail' }] };
+  const out = join(ROOT, `${seq++}.jsonl`);
+  writeFileSync(out, [rec, rec, { ...rec, org: 'yahoo.com' }].map((l) => JSON.stringify(l)).join('\n') + '\n');
+  assert.equal(run('metric', out, 'example.com', 'msgs').stdout.trim(), '6'); // google once + yahoo (other org, same id) once; 9 if not deduped
+  // failing msgs from the expected IP: 3 + 3 = 6 deduped (9 if not): --max-fail 6 passes only when deduped
+  const c = run('check', out, '--domains', 'example.com', '--expected', '198.51.100.9', '--max-fail', '6');
+  assert.equal(c.status, 0, c.stderr);
+});
+
+test('ingest: a multipart whose earlier part has a report-looking name but is not a report still finds the real one', () => {
+  const mp = (parts) => `From: x\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="BND"\r\n\r\n${parts.map((p) => `--BND\r\n${p}\r\n`).join('')}--BND--\r\n`;
+  const real = `Content-Type: text/xml\r\n\r\n${xml({ id: 'real' })}`;
+  const { dir, out } = inbox({
+    notes: mp(['Content-Type: text/plain; name="notes.xml"\r\n\r\njust some words', real]),
+    sig: mp(['Content-Type: application/pgp-signature; name="report.xml"\r\n\r\n-----BEGIN PGP SIGNATURE-----', real.replace('real', 'real2')]),
+  });
+  const r = run('ingest', dir, out);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, 'dmarc ingest: 2 new, 0 duplicate, 0 bad\n');
+  assert.deepEqual(names(dir, 'bad'), []);
+  assert.deepEqual(lines(out).map((l) => l.report_id).sort(), ['real', 'real2']);
+});
+
+test('ingest: when no candidate part is a report, the first candidate\'s error is recorded; the size limit holds for every attempt', () => {
+  const mp = (parts) => `From: x\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="BND"\r\n\r\n${parts.map((p) => `--BND\r\n${p}\r\n`).join('')}--BND--\r\n`;
+  const bomb = `Content-Type: application/gzip; name="b.gz"\r\nContent-Transfer-Encoding: base64\r\n\r\n${b64(gzipSync(Buffer.alloc(21 * 1024 * 1024)))}`;
+  const { dir, out } = inbox({
+    two: mp(['Content-Type: text/plain; name="a.xml"\r\n\r\nnope', 'Content-Type: text/plain; name="b.xml"\r\n\r\nalso nope']),
+    bomb: mp([bomb, 'Content-Type: text/plain; name="b.xml"\r\n\r\nnope']),
+  });
+  const r = run('ingest', dir, out);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, 'dmarc ingest: 0 new, 0 duplicate, 2 bad\n');
+  const reasons = Object.fromEntries(lines(out).map((l) => [l.file, l.reason]));
+  assert.equal(reasons.two, 'not a DMARC aggregate report');
+  assert.equal(reasons.bomb, 'report too large'); // first candidate's error, not the later "not a DMARC aggregate report"
+});
+
+test('ingest: <dir>/bad being a plain file: junk is not moved, exit 1, stderr names it, one dmarc-error per run (no more)', () => {
+  const { dir, out } = inbox({ junk: 'not mail at all' });
+  writeFileSync(join(dir, 'bad'), 'i am a file');
+  for (const n of [1, 2]) {
+    const r = run('ingest', dir, out);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /dmarc ingest: could not move junk to bad\/: /);
+    assert.equal(r.stdout, 'dmarc ingest: 0 new, 0 duplicate, 1 bad\n');
+    // The stuck file is re-parsed every run, so each run adds exactly one parse-error line (n lines after n runs): never two per run.
+    assert.equal(lines(out).filter((l) => l.kind === 'dmarc-error').length, n);
+  }
+  assert.ok(existsSync(join(dir, 'junk')));
+  assert.equal(readFileSync(join(dir, 'bad'), 'utf8'), 'i am a file'); // the file named bad is never ingested as mail
+});
+
+test('ingest: in a plain dir, files named done or bad are not messages', () => {
+  const { dir, out } = inbox({ done: zipMail(zip(xml({ id: 'a' }))), bad: zipMail(zip(xml({ id: 'b' }))) });
+  const r = run('ingest', dir, out);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, 'dmarc ingest: 0 new, 0 duplicate, 0 bad\n');
+  assert.equal(readFileSync(out, 'utf8'), '');
+});
+
+test('ingest: a read-only dir: the good report is recorded once as dmarc, no dmarc-error, exit 1', { skip: process.getuid?.() === 0 && 'root ignores permissions' }, () => {
+  const { dir, out } = inbox({ good: zipMail(zip(xml({ id: 'ro' }))) });
+  chmodSync(dir, 0o555);
+  try {
+    const r = run('ingest', dir, out);
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /could not move good to done\/: /);
+    assert.equal(r.stdout, 'dmarc ingest: 1 new, 0 duplicate, 0 bad\n');
+    assert.deepEqual(lines(out).map((l) => l.kind), ['dmarc']);
+    // next run sees it again: a duplicate (not a second record), still exit 1
+    const r2 = run('ingest', dir, out);
+    assert.equal(r2.status, 1);
+    assert.equal(r2.stdout, 'dmarc ingest: 0 new, 1 duplicate, 0 bad\n');
+    assert.equal(lines(out).length, 1);
+  } finally { chmodSync(dir, 0o755); }
 });

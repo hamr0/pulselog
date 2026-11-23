@@ -25,7 +25,8 @@
 //
 // DMARC passes when EITHER aligned DKIM or aligned SPF passes, so a message "fails" only when
 // both are not-pass. Exit codes: ingest/metric exit 0 on a normal run (bad mail is reported,
-// not fatal); everything exits 1 on bad arguments or an unreadable path.
+// not fatal); everything exits 1 on bad arguments or an unreadable path, and ingest also exits 1
+// when it cannot move a processed message to done/ or bad/.
 //
 // Wire it into pulselog (point a mail rule / fetchmail / procmail at ~/dmarc-inbox, ingest
 // from the same cron or a systemd timer before pulselog runs):
@@ -100,23 +101,26 @@ function decodeBody(headers, body) {
   throw new ParseError(`unsupported transfer encoding ${cte}`);
 }
 
-// Find the report entity: the message itself, or the first acceptable part of a multipart/*.
-function findPayload(raw) {
+// Candidate report entities, in order: the message itself, or every acceptable part of a multipart/*
+// (a text/plain or signature part may carry a .xml-ish name, so messageReport() tries each in turn).
+function findPayloads(raw) {
   const top = splitEntity(raw);
   const ct = top.headers['content-type'] || '';
   if (/^\s*multipart\//i.test(ct)) {
     const boundary = param(ct, 'boundary');
     if (!boundary) throw new ParseError('multipart without boundary');
     const body = top.body.toString('latin1');
+    const found = [];
     for (const part of body.split(`--${boundary}`).slice(1)) {
       if (part.startsWith('--')) break; // closing delimiter
       const e = splitEntity(Buffer.from(part.replace(/^[ \t]*\r?\n/, ''), 'latin1'));
-      if (acceptable(e.headers)) return e;
+      if (acceptable(e.headers)) found.push(e);
     }
-    throw new ParseError('no DMARC report part');
+    if (!found.length) throw new ParseError('no DMARC report part');
+    return found;
   }
   if (!acceptable(top.headers)) throw new ParseError(`unsupported content type ${ct.split(';')[0].trim() || '(none)'}`);
-  return top;
+  return [top];
 }
 
 // First entry of a zip, from its local file header. Bit 3 of the flags means the sizes live in
@@ -149,12 +153,21 @@ function bounded(inflate) {
   }
 }
 
-function reportXml(raw) {
-  const { headers, body } = findPayload(raw);
+function payloadXml({ headers, body }) {
   let bytes = decodeBody(headers, body);
   if (bytes[0] === 0x50 && bytes[1] === 0x4b) bytes = unzipFirst(bytes);
   else if (bytes[0] === 0x1f && bytes[1] === 0x8b) bytes = bounded(() => gunzipSync(bytes, { maxOutputLength: MAX_REPORT }));
   return bytes.toString('utf8');
+}
+
+// message -> report record: the first candidate part that decodes AND parses as an aggregate
+// report wins; if none does, the first candidate's error is the one reported.
+function messageReport(raw) {
+  let first;
+  for (const payload of findPayloads(raw)) {
+    try { return parseReport(payloadXml(payload)); } catch (err) { first ??= err; }
+  }
+  throw first;
 }
 
 // ---------- XML -> record ----------
@@ -236,7 +249,8 @@ const isMaildir = (dir) => existsSync(join(dir, 'new')) || existsSync(join(dir, 
 const readDirs = (dir) => (isMaildir(dir) ? ['new', 'cur'].map((d) => join(dir, d)).filter(existsSync) : [dir]); // the dirs ingest reads
 
 function listMessages(dir) {
-  return readDirs(dir).flatMap((d) => readdirSync(d, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => join(d, e.name)));
+  const own = (d, name) => d === dir && (name === 'done' || name === 'bad'); // never ingest our own sub-dir names, even as files
+  return readDirs(dir).flatMap((d) => readdirSync(d, { withFileTypes: true }).filter((e) => e.isFile() && !own(d, e.name)).map((e) => join(d, e.name)));
 }
 
 function moveTo(dir, sub, file) {
@@ -258,24 +272,33 @@ function ingest([dir, out]) {
   const seen = new Set(readLines(out).filter((l) => l.kind === 'dmarc').map((l) => `${l.org}\0${l.report_id}`));
   const append = (obj) => appendFileSync(out, JSON.stringify(obj) + '\n');
   let added = 0, dup = 0, bad = 0;
+  const moved = (file, sub) => { // a move failure is not a parse failure: report it, exit 1, keep going
+    try { moveTo(dir, sub, file); } catch (e) {
+      if (e.code === 'ENOENT') return; // another run already moved it
+      console.error(`dmarc ingest: could not move ${basename(file)} to ${sub}/: ${e.message}`);
+      process.exitCode = 1;
+    }
+  };
   for (const file of listMessages(dir)) {
+    let rec;
     try {
       if (statSync(file).size > MAX_MESSAGE) throw new ParseError('message too large');
-      const rec = parseReport(reportXml(readFileSync(file)));
-      const key = `${rec.org}\0${rec.report_id}`;
-      if (seen.has(key)) dup++;
-      else {
-        seen.add(key);
-        append({ ts: new Date().toISOString(), kind: 'dmarc', ...rec });
-        added++;
-      }
-      moveTo(dir, 'done', file);
+      rec = messageReport(readFileSync(file));
     } catch (err) {
       if (err.code === 'ENOENT' && !existsSync(file)) continue; // another run already moved it
       bad++;
       append({ ts: new Date().toISOString(), kind: 'dmarc-error', file: basename(file), reason: String(err.message).slice(0, 120) });
-      try { moveTo(dir, 'bad', file); } catch (e) { if (e.code !== 'ENOENT') console.error(`dmarc ingest: could not move ${basename(file)} to bad/: ${e.message}`); }
+      moved(file, 'bad');
+      continue;
     }
+    const key = `${rec.org}\0${rec.report_id}`;
+    if (seen.has(key)) dup++;
+    else {
+      seen.add(key);
+      append({ ts: new Date().toISOString(), kind: 'dmarc', ...rec });
+      added++;
+    }
+    moved(file, 'done');
   }
   console.log(`dmarc ingest: ${added} new, ${dup} duplicate, ${bad} bad`);
 }
@@ -318,10 +341,12 @@ const num = (v, name, dflt) => {
   return Number(v);
 };
 
-// Reports whose end falls within the last `days`; errors and other kinds are ignored.
+// Reports whose end falls within the last `days`; errors and other kinds are ignored; duplicates collapse.
 function recent(path, days) {
   const since = Date.now() - days * 86400000;
-  return readLines(path).filter((l) => l.kind === 'dmarc' && Date.parse(l.end) >= since);
+  const seen = new Set(); // overlapping ingests may write a report twice: count each org+report_id once
+  const first = (l) => { const k = `${l.org}\0${l.report_id}`; return !seen.has(k) && seen.add(k); };
+  return readLines(path).filter((l) => l.kind === 'dmarc' && first(l) && Date.parse(l.end) >= since);
 }
 
 function metric(args) {
