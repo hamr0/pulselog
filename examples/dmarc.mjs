@@ -76,12 +76,13 @@ function splitEntity(buf) { // headers / body at the first blank line
 const param = (value = '', name) =>
   new RegExp(`${name}\\s*=\\s*(?:"([^"]*)"|([^;\\s]+))`, 'i').exec(value)?.slice(1).find(Boolean);
 
-const GOOD_TYPES = ['application/zip', 'application/gzip', 'application/x-gzip', 'text/xml', 'application/xml'];
+const GOOD_TYPES = ['application/zip', 'application/gzip', 'application/x-gzip', 'text/xml', 'application/xml',
+  'application/x-zip-compressed', 'application/x-zip'];
 
 function acceptable(headers) {
   const type = (headers['content-type'] || 'text/plain').split(';')[0].trim().toLowerCase();
   const name = param(headers['content-type'], 'name') || param(headers['content-disposition'], 'filename') || '';
-  return GOOD_TYPES.includes(type) || (type === 'application/octet-stream' && /\.(zip|gz|xml)$/i.test(name));
+  return GOOD_TYPES.includes(type) || /\.(zip|gz|xml)$/i.test(name); // any label is fine with such a name: reportXml() sniffs the bytes
 }
 
 // Transfer-decode a body to bytes.

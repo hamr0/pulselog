@@ -140,6 +140,16 @@ test('ingest: multipart with a base64 .xml.gz part, a plain xml part, and octet-
   assert.deepEqual(lines(out).map((l) => l.report_id).sort(), ['gz', 'oct', 'plainxml', 'topxml']);
 });
 
+test('ingest: x-zip-compressed / x-zip labels, and text/plain with a .xml.gz filename after a plain text part', () => {
+  const { dir, out } = inbox({
+    xzc: multipart('Content-Type: application/x-zip-compressed; name="r.zip"\r\nContent-Transfer-Encoding: base64', b64(zip(xml({ id: 'xzc' })))),
+    xz: `Content-Type: application/x-zip\r\nContent-Transfer-Encoding: base64\r\n\r\n${b64(zip(xml({ id: 'xz' })))}\r\n`,
+    tp: multipart('Content-Type: text/plain\r\nContent-Disposition: attachment; filename=report.xml.gz\r\nContent-Transfer-Encoding: base64', b64(gzipSync(xml({ id: 'tp' })))),
+  });
+  assert.equal(run('ingest', dir, out).stdout, 'dmarc ingest: 3 new, 0 duplicate, 0 bad\n');
+  assert.deepEqual(lines(out).map((l) => l.report_id).sort(), ['tp', 'xz', 'xzc']);
+});
+
 test('ingest: entities are decoded', () => {
   const { dir, out } = inbox({ m: `Content-Type: text/xml\r\n\r\n${xml({ org: 'a&amp;b &lt;c&gt;' })}` });
   run('ingest', dir, out);
