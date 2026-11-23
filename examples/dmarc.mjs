@@ -149,6 +149,7 @@ function unzipFirst(b, budget) {
 // A decompression bomb trips maxOutputLength (RangeError): make it an ordinary bad message.
 // The budget is the message's TOTAL decompressed bytes: charge what was produced; a bomb eats it all.
 function bounded(inflate, budget) {
+  if (budget.left <= 0) throw new ParseError('report too large'); // spent: never ask zlib for a 0 limit (it throws RangeError)
   try { const out = inflate(); budget.left -= out.length; return out; } catch (err) {
     if (err instanceof RangeError) { budget.left = 0; throw new ParseError('report too large'); }
     throw err;
@@ -168,7 +169,6 @@ function messageReport(raw) {
   let first;
   const budget = { left: MAX_REPORT }; // one decompression budget per message, not per attempt
   for (const payload of findPayloads(raw)) {
-    if (budget.left <= 0) throw new ParseError('report too large');
     try { return parseReport(payloadXml(payload, budget)); } catch (err) { first ??= err; }
   }
   throw first;

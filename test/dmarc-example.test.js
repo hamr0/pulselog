@@ -508,14 +508,14 @@ test('ingest: the decompression budget is per MESSAGE: 50 parts that each inflat
   const mp = (parts) => `From: x\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="BND"\r\n\r\n${parts.map((p) => `--BND\r\n${p}\r\n`).join('')}--BND--\r\n`;
   const gz = b64(gzipSync(Buffer.alloc(20 * 1024 * 1024 - 1000, 0x20))); // just under the 20 MB cap: each part is individually legal
   const bomb = `Content-Type: application/gzip; name="b.xml.gz"\r\nContent-Transfer-Encoding: base64\r\n\r\n${gz}`;
-  const real = `Content-Type: text/xml\r\n\r\n${xml({ id: 'late' })}`;
+  const real = `Content-Type: application/gzip; name="r.xml.gz"\r\nContent-Transfer-Encoding: base64\r\n\r\n${b64(gzipSync(Buffer.from(xml({ id: 'late' }))))}`; // needs inflating, so the spent budget refuses it
   const { dir, out } = inbox({ many: mp([...Array(50).fill(bomb), real]) });
   const t0 = Date.now();
   const r = run('ingest', dir, out);
   const ms = Date.now() - t0;
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout, 'dmarc ingest: 0 new, 0 duplicate, 1 bad\n'); // per-attempt cap would have inflated all 50 (~12 s), then ingested 'late'
-  assert.equal(lines(out).find((l) => l.kind === 'dmarc-error').reason, 'report too large');
+  assert.equal(lines(out).find((l) => l.kind === 'dmarc-error').reason, 'not a DMARC aggregate report'); // the first candidate's own error (space-filled, not XML)
   assert.ok(ms < 10000, `took ${ms} ms`);
 });
 
@@ -557,4 +557,41 @@ test('ingest: a read-only dir: the good report is recorded once as dmarc, no dma
     assert.equal(r2.stdout, 'dmarc ingest: 0 new, 1 duplicate, 0 bad\n');
     assert.equal(lines(out).length, 1);
   } finally { chmodSync(dir, 0o755); }
+});
+
+// A gzip part that inflates to exactly the 20 MB budget: spends it all, and is legal itself (not a report).
+const spentGz = () => `Content-Type: application/gzip; name="j.xml.gz"\r\nContent-Transfer-Encoding: base64\r\n\r\n${b64(gzipSync(Buffer.alloc(20 * 1024 * 1024, 0x20)))}`;
+const mpParts = (parts) => `From: x\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="BND"\r\n\r\n${parts.map((p) => `--BND\r\n${p}\r\n`).join('')}--BND--\r\n`;
+
+test('ingest: a spent decompression budget refuses only parts that need inflating: a plain-XML part after it still ingests', () => {
+  const { dir, out } = inbox({ m: mpParts([spentGz(), `Content-Type: text/xml\r\n\r\n${xml({ id: 'plain-late' })}`]) });
+  const r = run('ingest', dir, out);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, 'dmarc ingest: 1 new, 0 duplicate, 0 bad\n'); // was: 0 new, 1 bad "report too large"
+  assert.equal(lines(out)[0].report_id, 'plain-late');
+});
+
+test('ingest: a spent decompression budget still reads a stored (method 0) zip entry', () => {
+  const stored = `Content-Type: application/zip; name="s.zip"\r\nContent-Transfer-Encoding: base64\r\n\r\n${b64(zip(xml({ id: 'stored-late' }), { method: 0 }))}`;
+  const { dir, out } = inbox({ m: mpParts([spentGz(), stored]) });
+  const r = run('ingest', dir, out);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, 'dmarc ingest: 1 new, 0 duplicate, 0 bad\n');
+  assert.equal(lines(out)[0].report_id, 'stored-late');
+});
+
+test('ingest: the recorded reason is the first candidate\'s error however the budget ran out (B-1 bytes, exactly B, or a bomb)', () => {
+  const gzPart = (n, body) => `Content-Type: application/gzip; name="j.xml.gz"\r\nContent-Transfer-Encoding: base64\r\n\r\n${b64(gzipSync(body ?? Buffer.alloc(n, 0x20)))}`;
+  const real = gzPart(0, Buffer.from(xml({ id: 'lost' })));
+  const B = 20 * 1024 * 1024;
+  const { dir, out } = inbox({
+    under: mpParts([gzPart(B - 1), real]), // budget left 1: the real gz trips zlib's limit
+    exact: mpParts([gzPart(B), real]),     // budget left 0
+  });
+  const r = run('ingest', dir, out);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, 'dmarc ingest: 0 new, 0 duplicate, 2 bad\n');
+  const reasons = Object.fromEntries(lines(out).map((l) => [l.file, l.reason]));
+  assert.equal(reasons.under, 'not a DMARC aggregate report'); // first candidate's own error (junk is not a report)
+  assert.equal(reasons.exact, 'not a DMARC aggregate report'); // was "report too large" from the loop's fresh error
 });
