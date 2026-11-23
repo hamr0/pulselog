@@ -10,7 +10,7 @@
 //       appended. Handled mail moves to <dir>/done/, unparseable mail to <dir>/bad/ (plus a
 //       {"kind":"dmarc-error"} line). Re-delivered reports (same org + report_id) are skipped.
 //       Keep dmarc.jsonl OUTSIDE a plain <dir> (it would be ingested as mail; refused).
-//       Oversized messages (>25 MB) and reports (>20 MB decompressed) go to bad/.
+//       Oversized messages (>25 MB) and messages whose reports decompress past 20 MB in total go to bad/.
 //   node dmarc.mjs metric <dmarc.jsonl> <domain> <msgs|pass-pct|unknown-ips>
 //                         [--expected ip/cidr,...] [--days 7]
 //       Prints ONE integer for the last N days (reports are counted by their end date).
@@ -126,7 +126,7 @@ function findPayloads(raw) {
 // First entry of a zip, from its local file header. Bit 3 of the flags means the sizes live in
 // a data descriptor *after* the data, so the header says 0 — then read the compressed size from
 // the central directory (found via the end-of-central-directory record).
-function unzipFirst(b) {
+function unzipFirst(b, budget) {
   if (b.length < 30 || b.readUInt32LE(0) !== 0x04034b50) throw new ParseError('not a zip');
   const flags = b.readUInt16LE(6);
   const method = b.readUInt16LE(8);
@@ -142,21 +142,23 @@ function unzipFirst(b) {
   if (start + size > b.length) throw new ParseError('truncated zip');
   const data = b.subarray(start, start + size);
   if (method === 0) return data;
-  if (method === 8) return bounded(() => inflateRawSync(data, { maxOutputLength: MAX_REPORT }));
+  if (method === 8) return bounded(() => inflateRawSync(data, { maxOutputLength: budget.left }), budget);
   throw new ParseError(`unsupported zip method ${method}`);
 }
 
 // A decompression bomb trips maxOutputLength (RangeError): make it an ordinary bad message.
-function bounded(inflate) {
-  try { return inflate(); } catch (err) {
-    throw err instanceof RangeError ? new ParseError('report too large') : err;
+// The budget is the message's TOTAL decompressed bytes: charge what was produced; a bomb eats it all.
+function bounded(inflate, budget) {
+  try { const out = inflate(); budget.left -= out.length; return out; } catch (err) {
+    if (err instanceof RangeError) { budget.left = 0; throw new ParseError('report too large'); }
+    throw err;
   }
 }
 
-function payloadXml({ headers, body }) {
+function payloadXml({ headers, body }, budget) {
   let bytes = decodeBody(headers, body);
-  if (bytes[0] === 0x50 && bytes[1] === 0x4b) bytes = unzipFirst(bytes);
-  else if (bytes[0] === 0x1f && bytes[1] === 0x8b) bytes = bounded(() => gunzipSync(bytes, { maxOutputLength: MAX_REPORT }));
+  if (bytes[0] === 0x50 && bytes[1] === 0x4b) bytes = unzipFirst(bytes, budget);
+  else if (bytes[0] === 0x1f && bytes[1] === 0x8b) bytes = bounded(() => gunzipSync(bytes, { maxOutputLength: budget.left }), budget);
   return bytes.toString('utf8');
 }
 
@@ -164,8 +166,10 @@ function payloadXml({ headers, body }) {
 // report wins; if none does, the first candidate's error is the one reported.
 function messageReport(raw) {
   let first;
+  const budget = { left: MAX_REPORT }; // one decompression budget per message, not per attempt
   for (const payload of findPayloads(raw)) {
-    try { return parseReport(payloadXml(payload)); } catch (err) { first ??= err; }
+    if (budget.left <= 0) throw new ParseError('report too large');
+    try { return parseReport(payloadXml(payload, budget)); } catch (err) { first ??= err; }
   }
   throw first;
 }

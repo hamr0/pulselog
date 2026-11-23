@@ -504,6 +504,21 @@ test('ingest: when no candidate part is a report, the first candidate\'s error i
   assert.equal(reasons.bomb, 'report too large'); // first candidate's error, not the later "not a DMARC aggregate report"
 });
 
+test('ingest: the decompression budget is per MESSAGE: 50 parts that each inflate to ~20 MB are rejected fast, and a real report after them is not reached', () => {
+  const mp = (parts) => `From: x\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="BND"\r\n\r\n${parts.map((p) => `--BND\r\n${p}\r\n`).join('')}--BND--\r\n`;
+  const gz = b64(gzipSync(Buffer.alloc(20 * 1024 * 1024 - 1000, 0x20))); // just under the 20 MB cap: each part is individually legal
+  const bomb = `Content-Type: application/gzip; name="b.xml.gz"\r\nContent-Transfer-Encoding: base64\r\n\r\n${gz}`;
+  const real = `Content-Type: text/xml\r\n\r\n${xml({ id: 'late' })}`;
+  const { dir, out } = inbox({ many: mp([...Array(50).fill(bomb), real]) });
+  const t0 = Date.now();
+  const r = run('ingest', dir, out);
+  const ms = Date.now() - t0;
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, 'dmarc ingest: 0 new, 0 duplicate, 1 bad\n'); // per-attempt cap would have inflated all 50 (~12 s), then ingested 'late'
+  assert.equal(lines(out).find((l) => l.kind === 'dmarc-error').reason, 'report too large');
+  assert.ok(ms < 10000, `took ${ms} ms`);
+});
+
 test('ingest: <dir>/bad being a plain file: junk is not moved, exit 1, stderr names it, one dmarc-error per run (no more)', () => {
   const { dir, out } = inbox({ junk: 'not mail at all' });
   writeFileSync(join(dir, 'bad'), 'i am a file');

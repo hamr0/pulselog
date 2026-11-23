@@ -24,9 +24,10 @@ sources:
 
 ## Safety decisions
 - Anyone can mail the public `rua` address, so decompressed reports over 20 MB and messages over 25 MB go to `bad/` (examples/dmarc.mjs).
+- Decompression is capped at 20 MB in TOTAL per message, across all candidate parts, so a message full of bomb parts costs at most one 20 MB inflate.
 - `check` prints problems on stderr, which is what a pulselog `command` check puts in its alert.
 - `ingest` refuses a `dmarc.jsonl` inside a plain `<dir>`, since it would be ingested as mail.
-- Malformed input is never fatal: it is moved to `bad/` with a `dmarc-error` line, and `ingest` still exits `0`. Only bad arguments or an unreadable path exit `1`.
+- Malformed input is never fatal: it is moved to `bad/` with a `dmarc-error` line, and `ingest` still exits `0`. Only bad arguments, an unreadable path, or a processed message `ingest` cannot move to `done/` or `bad/` exit `1`.
 - Re-delivered reports (same org and `report_id`) are skipped.
 
 ## Validation
