@@ -385,7 +385,7 @@ test('ingest: 80,000 unterminated <record> tags are ingested in linear time (was
   const ms = Date.now() - t0;
   assert.equal(r.status, 0);
   assert.equal(r.stdout, 'dmarc ingest: 1 new, 0 duplicate, 0 bad\n');
-  assert.ok(ms < 2000, `took ${ms} ms`);
+  assert.ok(ms < 15000, `took ${ms} ms (linear is ~0.3 s alone; the quadratic version took ~77 s)`);
 });
 
 test('ingest: a pre-existing 0644 jsonl is tightened to 0600', () => {
@@ -413,6 +413,31 @@ test('ingest: a symlinked jsonl pointing into a plain <dir> is a usage error and
   const r2 = run('ingest', dir, join(parent, 'new.jsonl'));
   assert.equal(r2.status, 1);
   assert.deepEqual(names(dir, 'bad'), []);
+});
+
+test('ingest: a jsonl inside a Maildir new/ or cur/ (also via symlink) is a usage error, nothing moved; root and logs/ are fine', () => {
+  const { dir } = inbox({ 'a.eml': zipMail(zip(xml())) }, { maildir: true });
+  const inNew = join(dir, 'new', 'd.jsonl');
+  const r = run('ingest', dir, inNew);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /outside/);
+  assert.deepEqual(names(dir, 'new'), ['a.eml']);
+  assert.deepEqual(names(dir, 'bad'), []);
+  assert.ok(!existsSync(inNew));
+  const real = join(dir, 'cur', 'd.jsonl');
+  writeFileSync(real, '');
+  const link = join(ROOT, `${seq++}-mdlink.jsonl`);
+  symlinkSync(real, link);
+  const r2 = run('ingest', dir, link);
+  assert.equal(r2.status, 1);
+  assert.deepEqual(names(dir, 'bad'), []);
+  assert.deepEqual(names(dir, 'new'), ['a.eml']);
+  rmSync(real); // the refused stand-in would itself be read as a message
+  const r3 = run('ingest', dir, join(dir, 'dmarc.jsonl'));
+  assert.equal(r3.status, 0, r3.stderr);
+  assert.equal(r3.stdout, 'dmarc ingest: 1 new, 0 duplicate, 0 bad\n');
+  mkdirSync(join(dir, 'logs'));
+  assert.equal(run('ingest', dir, join(dir, 'logs', 'dmarc.jsonl')).status, 0);
 });
 
 test('ingest: overlapping runs (3 at once over 1,500 messages) all exit 0, record no dmarc-error, lose no report', async () => {

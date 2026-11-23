@@ -233,9 +233,10 @@ const readLines = (path) => {
 
 const isMaildir = (dir) => existsSync(join(dir, 'new')) || existsSync(join(dir, 'cur'));
 
+const readDirs = (dir) => (isMaildir(dir) ? ['new', 'cur'].map((d) => join(dir, d)).filter(existsSync) : [dir]); // the dirs ingest reads
+
 function listMessages(dir) {
-  const dirs = isMaildir(dir) ? ['new', 'cur'].map((d) => join(dir, d)).filter(existsSync) : [dir];
-  return dirs.flatMap((d) => readdirSync(d, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => join(d, e.name)));
+  return readDirs(dir).flatMap((d) => readdirSync(d, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => join(d, e.name)));
 }
 
 function moveTo(dir, sub, file) {
@@ -248,10 +249,9 @@ function moveTo(dir, sub, file) {
 function ingest([dir, out]) {
   if (!dir || !out) throw new UsageError('ingest needs <dir> <dmarc.jsonl>');
   if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw new UsageError(`not a directory: ${dir}`);
-  if (!isMaildir(dir)) { // compare real paths: a symlinked out must not slip into <dir>
-    const real = realpathSync(dir);
+  { // compare real paths: a symlinked out must not slip into a dir ingest reads
     const outReal = existsSync(out) ? realpathSync(out) : join(realpathSync(dirname(resolve(out))), basename(out));
-    if (dirname(outReal) === real) throw new UsageError('keep dmarc.jsonl outside <dir> (it would be ingested as a message)');
+    if (readDirs(dir).some((d) => realpathSync(d) === dirname(outReal))) throw new UsageError('keep dmarc.jsonl outside <dir> (it would be ingested as a message)');
   }
   closeSync(openSync(out, 'a', 0o600)); // create 0600 up front; throws if unwritable
   chmodSync(out, 0o600); // the mode above only applies on create
