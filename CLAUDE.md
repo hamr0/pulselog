@@ -86,7 +86,7 @@ message/stack leak must make it fail. Keep it that way.
 `CLAUDE.md`, `docs/`, `.github/`, `.claude/` are repo-only — excluded from the
 `package.json` `files` allowlist. The tarball ships `src/` + `types/` + the doc set
 (`README.md`, `pulselog.context.md`, `IMPLEMENTATION_GUIDE.md`, `CHANGELOG.md`) +
-`config.example.json` + `bin/`.
+`config.example.json` + `bin/` + `examples/` (bundled scripts, not library API).
 
 <!-- MEMORY:START -->
 @.claude/remember/MEMORY.md
