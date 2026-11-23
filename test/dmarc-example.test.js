@@ -2,11 +2,11 @@
 // the zip/gzip/multipart/Maildir wrapping are all built here, never copied from a real report.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readFileSync, existsSync, readdirSync, statSync, chmodSync, symlinkSync } from 'node:fs';
 import { run as healthRun } from '../src/index.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { deflateRawSync, gzipSync } from 'node:zlib';
 
@@ -365,4 +365,60 @@ test('ingest: dmarc.jsonl inside a plain <dir> is a usage error and is not moved
   assert.ok(existsSync(inside));
   assert.deepEqual(names(dir, 'bad'), []);
   assert.ok(existsSync(join(dir, 'a.eml')), 'nothing was processed');
+});
+
+test('ingest: 80,000 unterminated <record> tags are ingested in linear time (was quadratic, ~77 s)', () => {
+  const hostile = xml({ id: 'hostile', rows: [] }).replace('</feedback>', `${'<record>'.repeat(80000)}</feedback>`);
+  const { dir, out } = inbox({ m: `Content-Type: text/xml\r\n\r\n${hostile}` });
+  const t0 = Date.now();
+  const r = run('ingest', dir, out);
+  const ms = Date.now() - t0;
+  assert.equal(r.status, 0);
+  assert.equal(r.stdout, 'dmarc ingest: 1 new, 0 duplicate, 0 bad\n');
+  assert.ok(ms < 2000, `took ${ms} ms`);
+});
+
+test('ingest: a pre-existing 0644 jsonl is tightened to 0600', () => {
+  const { dir, out } = inbox({ m: zipMail(zip(xml())) });
+  writeFileSync(out, '');
+  chmodSync(out, 0o644);
+  assert.equal(run('ingest', dir, out).status, 0);
+  assert.equal(statSync(out).mode & 0o777, 0o600);
+});
+
+test('ingest: a symlinked jsonl pointing into a plain <dir> is a usage error and nothing is moved', () => {
+  const { dir } = inbox({ 'a.eml': zipMail(zip(xml())) });
+  const real = join(dir, 'dmarc.jsonl');
+  writeFileSync(real, '');
+  const link = join(ROOT, `${seq++}-link.jsonl`);
+  symlinkSync(real, link);
+  const r = run('ingest', dir, link);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /outside/);
+  assert.ok(existsSync(real) && existsSync(join(dir, 'a.eml')));
+  assert.deepEqual(names(dir, 'bad'), []);
+  // a not-yet-existing out under a symlinked parent dir that resolves into <dir>
+  const parent = join(ROOT, `${seq++}-parent`);
+  symlinkSync(dir, parent);
+  const r2 = run('ingest', dir, join(parent, 'new.jsonl'));
+  assert.equal(r2.status, 1);
+  assert.deepEqual(names(dir, 'bad'), []);
+});
+
+test('ingest: overlapping runs (3 at once over 1,500 messages) all exit 0, record no dmarc-error, lose no report', async () => {
+  const files = {};
+  for (let i = 0; i < 1500; i++) files[`m${i}`] = `Content-Type: text/xml\r\n\r\n${xml({ id: `r${i}` })}`;
+  const { dir, out } = inbox(files);
+  const go = () => new Promise((res) => {
+    const c = spawn(process.execPath, [SCRIPT, 'ingest', dir, out]);
+    let stderr = '';
+    c.stderr.on('data', (d) => { stderr += d; });
+    c.on('close', (status) => res({ status, stderr }));
+  });
+  const results = await Promise.all([go(), go(), go()]);
+  for (const r of results) assert.equal(r.status, 0, r.stderr);
+  const ls = lines(out);
+  assert.equal(ls.filter((l) => l.kind === 'dmarc-error').length, 0);
+  assert.equal(new Set(ls.filter((l) => l.kind === 'dmarc').map((l) => l.report_id)).size, 1500);
+  assert.equal(names(dir, 'done').length, 1500);
 });

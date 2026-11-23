@@ -730,7 +730,8 @@ Semantics:
 
 Gotchas:
 
-- **Keep `dmarc.jsonl` outside a plain `<dir>`**: it would be read as mail, so `ingest` refuses it. (In a Maildir only `new/` and `cur/` are read.)
+- **Keep `dmarc.jsonl` outside a plain `<dir>`**: it would be read as mail, so `ingest` refuses it, with symlinks resolved (a symlinked JSONL that lands in `<dir>` is refused too). (In a Maildir only `new/` and `cur/` are read.)
+- **Run one `ingest` at a time.** systemd timers don't overlap on their own; with cron, wrap it: `flock -n /run/lock/dmarc-ingest.lock node /opt/dmarc.mjs ingest …`. An overlap is survivable (a file another run already moved is skipped), but two runs could both record the same report.
 - **`done/` and `bad/` are created beside `new/`/`cur/`** (or inside a plain dir). Handled mail goes to `done/`, unparseable mail to `bad/` plus a `dmarc-error` line. Re-delivered reports (same org + `report_id`) are skipped.
 - **Size limits:** messages over 25 MB and reports over 20 MB decompressed go to `bad/`. Malformed input is never fatal; `ingest` exits `0` and only bad arguments or an unreadable path exit `1`.
 - **Problem lines go to stderr** so a pulselog `command` check puts them in the alert.

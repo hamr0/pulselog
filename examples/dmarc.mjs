@@ -36,7 +36,7 @@
 //     { "type": "command", "name": "dmarc", "command": "node",
 //       "args": ["/opt/dmarc.mjs", "check", "/var/lib/pulselog/dmarc.jsonl", "--domains", "example.com", "--expected", "203.0.113.7,2001:db8::/64"] }
 //   (ingest itself is just a cron line: node /opt/dmarc.mjs ingest ~/Maildir /var/lib/pulselog/dmarc.jsonl)
-import { readFileSync, readdirSync, statSync, mkdirSync, renameSync, appendFileSync, existsSync, openSync, closeSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, mkdirSync, renameSync, appendFileSync, existsSync, openSync, closeSync, realpathSync, chmodSync } from 'node:fs';
 import { join, basename, resolve, dirname } from 'node:path';
 import { inflateRawSync, gunzipSync } from 'node:zlib';
 import { BlockList, isIP } from 'node:net';
@@ -161,10 +161,26 @@ function reportXml(raw) {
 const ENTITIES = { lt: '<', gt: '>', quot: '"', apos: "'", amp: '&' };
 const unescapeXml = (s) => s.replace(/&(lt|gt|quot|apos|amp);/g, (_, e) => ENTITIES[e]);
 
-// Inner text of the first <name>...</name> (any namespace prefix / attributes), or undefined.
+// Inner text of each <name>...</name> (any namespace prefix / attributes), in order. Linear scan: a
+// regex with a lazy body goes quadratic on many unterminated tags, and the rua address is public.
+function* elements(xml, name) {
+  const open = new RegExp(`<(?:\\w+:)?${name}(?=[\\s>])`, 'g');
+  const close = new RegExp(`</(?:\\w+:)?${name}>`, 'g');
+  for (let m; (m = open.exec(xml)); ) {
+    const gt = xml.indexOf('>', open.lastIndex);
+    if (gt < 0) return;
+    close.lastIndex = gt + 1;
+    const end = close.exec(xml);
+    if (!end) return; // no close tag after here, so none for any later open either
+    yield xml.slice(gt + 1, end.index);
+    open.lastIndex = close.lastIndex;
+  }
+}
+
+// Inner text of the first <name>...</name>, or undefined.
 function tag(xml, name) {
-  const m = new RegExp(`<(?:\\w+:)?${name}(?:\\s[^>]*)?>([\\s\\S]*?)</(?:\\w+:)?${name}>`).exec(xml);
-  return m ? unescapeXml(m[1].trim()) : undefined;
+  for (const inner of elements(xml, name)) return unescapeXml(inner.trim());
+  return undefined;
 }
 
 const toIso = (secs) => (Number.isFinite(+secs) && secs ? new Date(+secs * 1000).toISOString() : null);
@@ -178,8 +194,8 @@ function parseReport(xml) {
   const domain = tag(published, 'domain');
   if (!org || !reportId || !domain) throw new ParseError('report missing org_name/report_id/domain');
   const sources = [];
-  for (const rec of xml.matchAll(/<(?:\w+:)?record(?:\s[^>]*)?>([\s\S]*?)<\/(?:\w+:)?record>/g)) {
-    const row = tag(rec[1], 'row') || '';
+  for (const rec of elements(xml, 'record')) {
+    const row = tag(rec, 'row') || '';
     const ev = tag(row, 'policy_evaluated') || '';
     sources.push({
       ip: tag(row, 'source_ip') || '',
@@ -231,8 +247,13 @@ function moveTo(dir, sub, file) {
 function ingest([dir, out]) {
   if (!dir || !out) throw new UsageError('ingest needs <dir> <dmarc.jsonl>');
   if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw new UsageError(`not a directory: ${dir}`);
-  if (!isMaildir(dir) && dirname(resolve(out)) === resolve(dir)) throw new UsageError('keep dmarc.jsonl outside <dir> (it would be ingested as a message)');
+  if (!isMaildir(dir)) { // compare real paths: a symlinked out must not slip into <dir>
+    const real = realpathSync(dir);
+    const outReal = existsSync(out) ? realpathSync(out) : join(realpathSync(dirname(resolve(out))), basename(out));
+    if (dirname(outReal) === real) throw new UsageError('keep dmarc.jsonl outside <dir> (it would be ingested as a message)');
+  }
   closeSync(openSync(out, 'a', 0o600)); // create 0600 up front; throws if unwritable
+  chmodSync(out, 0o600); // the mode above only applies on create
   const seen = new Set(readLines(out).filter((l) => l.kind === 'dmarc').map((l) => `${l.org}\0${l.report_id}`));
   const append = (obj) => appendFileSync(out, JSON.stringify(obj) + '\n');
   let added = 0, dup = 0, bad = 0;
@@ -249,9 +270,10 @@ function ingest([dir, out]) {
       }
       moveTo(dir, 'done', file);
     } catch (err) {
+      if (err.code === 'ENOENT' && !existsSync(file)) continue; // another run already moved it
       bad++;
       append({ ts: new Date().toISOString(), kind: 'dmarc-error', file: basename(file), reason: String(err.message).slice(0, 120) });
-      moveTo(dir, 'bad', file);
+      try { moveTo(dir, 'bad', file); } catch (e) { if (e.code !== 'ENOENT') console.error(`dmarc ingest: could not move ${basename(file)} to bad/: ${e.message}`); }
     }
   }
   console.log(`dmarc ingest: ${added} new, ${dup} duplicate, ${bad} bad`);
