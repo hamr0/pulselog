@@ -5,6 +5,11 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`examples/dmarc.mjs` — a bundled example that turns DMARC aggregate (`rua`) reports into JSONL, a digest metric and a health check.** `ingest` parses zip/gzip/plain-XML reports from a Maildir or plain dir into `dmarc.jsonl`; `metric` prints one integer (`msgs`, `pass-pct`, `unknown-ips`) for the pulselog digest; `check` is a health `command` check that prints problems on stderr and exits `1`. An example, not API: no semver guarantee, copy it to pin it. Zero dependencies, no pulselog core change. Documented in `pulselog.context.md`; rationale in `docs/wiki/dmarc-example-decisions.md`.
+
 ## [0.8.0] - 2026-10-23
 
 ### Added

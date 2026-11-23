@@ -679,6 +679,65 @@ return and what goes in `alert.app` / context.
   `<name>-*.tar.gz`; pulselog makes no `latest` symlink). Pair it with a `file-age`
   check on the pull target as the "did the backup/pull stop?" dead-man's-switch.
 
+## Example: DMARC aggregate reports
+
+[`examples/dmarc.mjs`](examples/dmarc.mjs) turns the DMARC aggregate (`rua`) reports that
+Google, Microsoft, Yahoo... mail you into a JSONL file, then feeds a digest metric and a
+health check from it. It is a **bundled example, not library API**: no semver guarantee, it
+may change between releases, and you copy it if you want to pin it. Zero dependencies, no
+network. The domains, expected sending IPs, thresholds and window are args in *your* config;
+the file owns only the DMARC parsing.
+
+Flow: your MTA delivers `rua` mail into a Maildir (or a plain dir) -> a timer runs
+`ingest` (before pulselog) -> digest `metrics` call `metric`, a health `command` check calls
+`check`.
+
+```jsonc
+// timer / cron:  node /opt/dmarc.mjs ingest ~/dmarc-inbox /var/lib/pulselog/dmarc.jsonl
+{
+  "digest": {
+    "metrics": [
+      { "name": "example.com msgs",   "command": "node", "args": ["/opt/dmarc.mjs", "metric", "/var/lib/pulselog/dmarc.jsonl", "example.com", "msgs"] },
+      { "name": "example.com pass%",  "command": "node", "args": ["/opt/dmarc.mjs", "metric", "/var/lib/pulselog/dmarc.jsonl", "example.com", "pass-pct"] },
+      { "name": "example.com unknown IPs", "command": "node", "args": ["/opt/dmarc.mjs", "metric", "/var/lib/pulselog/dmarc.jsonl", "example.com", "unknown-ips", "--expected", "203.0.113.0/24"] },
+      { "name": "example.org msgs",   "command": "node", "args": ["/opt/dmarc.mjs", "metric", "/var/lib/pulselog/dmarc.jsonl", "example.org", "msgs"] },
+      { "name": "example.org pass%",  "command": "node", "args": ["/opt/dmarc.mjs", "metric", "/var/lib/pulselog/dmarc.jsonl", "example.org", "pass-pct"] },
+      { "name": "example.org unknown IPs", "command": "node", "args": ["/opt/dmarc.mjs", "metric", "/var/lib/pulselog/dmarc.jsonl", "example.org", "unknown-ips", "--expected", "203.0.113.0/24"] }
+    ]
+  },
+  "checks": [
+    { "type": "command", "name": "dmarc", "command": "node",
+      "args": ["/opt/dmarc.mjs", "check", "/var/lib/pulselog/dmarc.jsonl",
+               "--domains", "example.com,example.org", "--expected", "203.0.113.0/24"] }
+  ]
+}
+```
+
+`ingest` appends one line per report, or one per unparseable message:
+
+```jsonl
+{"ts":"…","kind":"dmarc","domain":"example.com","org":"google.com","report_id":"…","begin":"…","end":"…","p":"none","msgs":42,"dkim_aligned":40,"spf_aligned":42,"fail":0,"sources":[{"ip":"203.0.113.7","count":42,"dkim":"pass","spf":"pass","disposition":"none"}]}
+{"ts":"…","kind":"dmarc-error","file":"1700000000.M1.host","reason":"no DMARC report part"}
+```
+
+Semantics:
+
+- **DMARC fail** = both DKIM and SPF not `pass` (either aligned pass is enough). `fail` counts those messages.
+- `pass-pct` = `round(100 * (msgs - fail) / msgs)`, and **`100` when there is no mail** (nothing failed).
+- `unknown-ips` = distinct source IPs outside `--expected` (required for that metric).
+- The window (`--days`, default 7) counts a report by its **end date**, not when it was ingested.
+- `check` is silent with exit `0` when fine; otherwise one line per problem on **stderr** and exit `1`: `signing broke` (fail from an *expected* IP > `--max-fail`, default 0) or `unexpected source` (mail from an IP outside `--expected` > `--max-unknown`, default 0).
+
+Gotchas:
+
+- **Keep `dmarc.jsonl` outside a plain `<dir>`**: it would be read as mail, so `ingest` refuses it. (In a Maildir only `new/` and `cur/` are read.)
+- **`done/` and `bad/` are created beside `new/`/`cur/`** (or inside a plain dir). Handled mail goes to `done/`, unparseable mail to `bad/` plus a `dmarc-error` line. Re-delivered reports (same org + `report_id`) are skipped.
+- **Size limits:** messages over 25 MB and reports over 20 MB decompressed go to `bad/`. Malformed input is never fatal; `ingest` exits `0` and only bad arguments or an unreadable path exit `1`.
+- **Problem lines go to stderr** so a pulselog `command` check puts them in the alert.
+- **The report address is public.** Anyone can mail it a fake report, so treat the numbers as signals, not proof, and keep the alert threshold sensible (a `--max-unknown` of `0` is noisy on a busy domain).
+- **`ruf` (forensic) reports are not parsed**; they land in `bad/`.
+- **Delivery into the dir is yours.** For example a Postfix local alias whose target ends in `/` (`dmarc: /home/me/dmarc-inbox/`) delivers a native Maildir.
+
 ## What pulselog will not do (the refusals *are* the product)
 
 - **No daemon / scheduler** — bring cron or a systemd timer.
