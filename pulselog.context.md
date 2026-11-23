@@ -27,7 +27,7 @@ and the optional flightlog pairing — see the
 [Implementation Guide](IMPLEMENTATION_GUIDE.md) (Part B is pulselog; it ships in the
 package and needs no flightlog).
 
-> **Status:** `0.8.0` is the current release — all three modes (health + digest + **`backup`**)
+> **Status:** `0.9.0` is the current release — all three modes (health + digest + **`backup`**)
 > are on npm, and `0.7.2` shipped the deployment
 > **[Implementation Guide](IMPLEMENTATION_GUIDE.md)** in the package. `0.4.0` added a per-check `timeoutMs` and opt-in in-run `retries`, and a
 > security pass (config-perms gate, backup dir/umask tightening, per-engine password env,
