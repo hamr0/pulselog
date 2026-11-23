@@ -134,6 +134,8 @@ It's **best-effort**: a broken sink is recorded (an outcome shows in the JSONL �
 
 pulselog owns the **envelope** (stage → tar → atomic `mv` → size floor → rolling retention over its own `<name>-*` archives → `kind:"backup"` line). It is **not a backup engine**: `db` ships the consistency-safe defaults for the common OSS engines, `include` is a plain file copy, and anything else (Mongo, Redis, a replica) stays your `command`. Off-host copy, encryption, and restore-testing are the operator's job. A failed run **records, alerts, and exits `1`** — and never rotates, so a bad backup can't delete a good one. The archive holds DB dumps + keys, so it's written **`0600`** (dir `0700`), and DB passwords pass via env, never the command line. See the [integration guide](pulselog.context.md) for the dump cookbook and every option.
 
+Bundled examples (not API; copy and bend them) live in [`examples/`](examples/): `mail-delivery-check.sh` (off-box bounce check), `pull-restricted.sh` (read-only off-host backup pull) and `dmarc.mjs` (turn DMARC aggregate reports into a digest metric and a health check; see the [integration guide](pulselog.context.md)).
+
 ## The record
 
 Same core fields as flightlog (`ts`, `kind`, …) so one set of tools reads all the streams. Each writer keeps its **own** file — two processes must never append one file (rotation races, perms):

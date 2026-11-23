@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-11-23
+
+### Added
+- **`examples/dmarc.mjs` — a bundled example that turns DMARC aggregate (`rua`) reports into JSONL, a digest metric and a health check.** An example shipped in the tarball, not library API: no semver guarantee, copy it to pin it. Zero dependencies, no pulselog core change. Documented in `pulselog.context.md`; rationale in `docs/wiki/dmarc-example-decisions.md`.
+  - `ingest <maildir-or-dir> <dmarc.jsonl>` reads rua mail from a Maildir or a plain directory, takes zip, gzip and plain-XML reports (bare or one multipart level; `x-zip` labels and any `.zip`/`.gz`/`.xml` filename are accepted), tries every candidate part until one parses, and appends one `kind:"dmarc"` line per report. Mail moves to `done/`, or to `bad/` with a `dmarc-error` line when it can't be parsed. The JSONL is `0600`, and a JSONL inside the directory being ingested (symlinks resolved) is refused.
+  - `metric` prints one integer (`msgs`, `pass-pct`, `unknown-ips`) for a pulselog digest metric; `check` is a health `command` check that prints problems on stderr and exits `1`. Both count each org + `report_id` once, so overlapping ingests don't double-count. Policy (domains, expected IPs/CIDRs, thresholds, window) stays in your config.
+  - Hostile mail is bounded: messages over 25 MB are refused, each message gets one 20 MB decompression budget across all its parts, and tag scanning is linear-time. A failed move into `done/` or `bad/` goes to stderr and exits `1`, so a good report is never also counted bad. Run one ingest at a time (`flock` under cron).
+
 ## [0.8.0] - 2026-10-23
 
 ### Added
@@ -302,7 +310,8 @@ publishing (signed provenance, no token). Zero production dependencies
   throws on import, directing users to the repo. Reserves `pulselog` while `0.1.0`
   is built.
 
-[Unreleased]: https://github.com/hamr0/pulselog/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/hamr0/pulselog/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/hamr0/pulselog/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/hamr0/pulselog/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/hamr0/pulselog/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/hamr0/pulselog/compare/v0.7.0...v0.7.1
